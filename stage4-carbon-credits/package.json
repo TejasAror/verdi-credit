@@ -1,0 +1,30 @@
+{
+  "name": "verdicred-stage4-carbon-credits",
+  "version": "0.1.0",
+  "description": "VerdiCred Stage 4 — Carbon Credit Issuance on Solana (Anchor + SPL Token-2022)",
+  "scripts": {
+    "lint": "echo \"no lint\"",
+    "test": "anchor test",
+    "build": "anchor build",
+    "deploy:devnet": "bash scripts/deploy-devnet.sh",
+    "init:devnet": "TS_NODE_TRANSPILE_ONLY=1 ts-node scripts/init-oracle.ts",
+    "smoke:devnet": "TS_NODE_TRANSPILE_ONLY=1 ts-node scripts/smoke-devnet.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "0.32.1",
+    "@solana/buffer-layout": "^4.0.1",
+    "@solana/spl-token": "0.4.9",
+    "@solana/web3.js": "1.98.2",
+    "bs58": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.5",
+    "@types/mocha": "^10.0.2",
+    "@types/node": "^20.16.10",
+    "chai": "^4.3.7",
+    "mocha": "^10.2.0",
+    "ts-mocha": "^10.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}

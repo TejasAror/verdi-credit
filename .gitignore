@@ -1,0 +1,14 @@
+# VerdiCred — root gitignore
+node_modules/
+dist/
+.next/
+target/
+RL/
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+coverage/
+stage4-carbon-credits/target/
+stage4-carbon-credits/RL/

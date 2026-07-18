@@ -1,0 +1,147 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model AuditLog {
+  id           String         @id @default(uuid())
+  actorId      String
+  targetId     String
+  action       AuditLogAction
+  previousRole Role?
+  newRole      Role?
+  reason       String?
+  createdAt    DateTime       @default(now())
+  evidenceId   String?
+  actor        User           @relation("AuditLogActor", fields: [actorId], references: [id], onDelete: Cascade)
+  evidence     Evidence?      @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  target       User           @relation("AuditLogTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([actorId])
+  @@index([targetId])
+  @@index([evidenceId])
+  @@index([createdAt])
+}
+
+model User {
+  id           String     @id @default(uuid())
+  supabaseId   String     @unique
+  email        String     @unique
+  fullName     String?
+  role         Role       @default(BUYER)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  auditActions AuditLog[] @relation("AuditLogActor")
+  auditTargets AuditLog[] @relation("AuditLogTarget")
+  projects     Project[]
+
+  @@index([role])
+}
+
+model Project {
+  id                   String               @id @default(uuid())
+  ownerId              String
+  projectName          String
+  projectType          ProjectType
+  methodology          String
+  expectedAnnualTonnes Float
+  geoPolygon           Json
+  status               ProjectStatus        @default(PENDING_VERIFICATION)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  evidence             Evidence[]
+  owner                User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  VerificationReport   VerificationReport[]
+
+  @@index([ownerId])
+  @@index([status])
+}
+
+model Evidence {
+  id        String         @id @default(uuid())
+  projectId String
+  source    EvidenceSource
+  status    EvidenceStatus @default(PENDING)
+  cid       String
+  ipfsUrl   String?
+  latitude  Float?
+  longitude Float?
+  timestamp DateTime?
+  metadata  Json?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  auditLogs AuditLog[]
+  project   Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([source])
+  @@index([status])
+}
+
+model VerificationReport {
+  id              String        @id @default(uuid())
+  projectId       String
+  verifiedTonnes  Float
+  confidenceScore Float
+  status          ProjectStatus @default(PENDING_VERIFICATION)
+  reportCid       String
+  reportUrl       String?
+  ndviScore       Float?
+  anomalies       Json?
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum Role {
+  DEVELOPER
+  BUYER
+  AUDITOR
+  ADMIN
+}
+
+enum ProjectType {
+  REFORESTATION
+  SOIL_CARBON
+  RENEWABLE_ENERGY
+}
+
+enum ProjectStatus {
+  DRAFT
+  PENDING_VERIFICATION
+  VERIFIED
+  REJECTED
+  RETIRED
+}
+
+enum EvidenceSource {
+  SENTINEL2
+  LANDSAT
+  NASA_EARTHDATA
+  OPENWEATHER
+  GEO_UPLOAD
+}
+
+enum EvidenceStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum AuditLogAction {
+  ROLE_CHANGED
+  ROLE_PROMOTED
+  ROLE_DEMOTED
+  EVIDENCE_UPLOADED
+  EVIDENCE_DELETED
+  EVIDENCE_VIEWED
+}

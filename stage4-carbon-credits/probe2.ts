@@ -1,0 +1,21 @@
+import * as anchor from "@coral-xyz/anchor";
+import { AnchorProvider, Program } from "@coral-xyz/anchor";
+import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+import * as fs from "fs";
+const idl = JSON.parse(fs.readFileSync("target/idl/carbon_credit_program.json","utf8"));
+const pid = new PublicKey(idl.address);
+const DEP = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync("target/deploy/devnet-deployer-keypair.json","utf8"))));
+const conn = new anchor.web3.Connection("http://127.0.0.1:8899","confirmed");
+const provider = new AnchorProvider(conn, new anchor.Wallet(DEP), {commitment:"confirmed"});
+const program = new Program(idl as any, provider);
+const [oracleConfig] = PublicKey.findProgramAddressSync([Buffer.from("verdicred"),Buffer.from("oracle_config")], pid);
+const [oma] = PublicKey.findProgramAddressSync([Buffer.from("oracle_mint_authority")], pid);
+(async()=>{
+  const vo = Keypair.fromSeed(Uint8Array.from(Array(32).fill(7)));
+  const s = await conn.requestAirdrop(vo.publicKey, 2e9); await conn.confirmTransaction(s,"confirmed");
+  console.log("exists before:", !!(await program.account.oracleConfig.fetchNullable(oracleConfig)));
+  const tx = await program.methods.initialize().accounts({oracleConfig, oracleMintAuthority:oma, deploymentAuthority:DEP.publicKey, verifierOracleAuthority:vo.publicKey, systemProgram:SystemProgram.programId}).rpc();
+  console.log("init tx:", tx);
+  const c = await program.account.oracleConfig.fetchNullable(oracleConfig);
+  console.log("creditMintSet after init:", c?.creditMintSet);
+})();
