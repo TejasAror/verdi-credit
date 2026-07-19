@@ -14,6 +14,7 @@ import {
   CreditBatchView,
   RetirementView,
 } from './solana-issuance.service';
+import { SolanaConfigService } from './solana-config.service';
 import {
   EligibleResponseDto,
   IssueCreditDto,
@@ -23,6 +24,7 @@ import {
   VERIFIED_STATUS,
   Stage3ToOnchainAdapter,
 } from './adapters/stage3-to-onchain.adapter';
+import { PrismaService } from '../prisma/prisma.service';
 
 /**
  * CarbonCreditsService — Stage 4 orchestrator.
@@ -32,7 +34,7 @@ import {
  *    minted (status == VERIFIED) plus the 1:1 amount.
  *  - `issue` runs the automated 1:1 bridge: latest VERIFIED report →
  *    floor(verifiedTonnes) credits → oracle-signed `mintCredit` tx → persisted
- *    issuance ledger row.
+ *    issuance ledger row AND a Holding record for the recipient (developer).
  *  - `transfer` / `retire` build owner-signed-ready transactions.
  *  - `getBatches` / `getRetirements` read on-chain state for the audit view.
  */
@@ -43,13 +45,12 @@ export class CarbonCreditsService {
   constructor(
     private readonly verification: VerificationService,
     private readonly solana: SolanaIssuanceService,
+    private readonly solanaConfig: SolanaConfigService,
     private readonly adapter: Stage3ToOnchainAdapter,
+    private readonly prisma: PrismaService,
   ) {}
 
-  /**
-   * Check whether a project's latest verification report is eligible for
-   * 1:1 credit issuance and report the amount that would be minted.
-   */
+  /** Check whether a project's latest verification report is eligible for 1:1 issuance. */
   async eligible(projectId: string): Promise<EligibleResponseDto> {
     let report: VerificationReportResponse;
     try {
@@ -75,8 +76,7 @@ export class CarbonCreditsService {
       reportCid: report.reportCid,
       evidenceCid: evidenceCids[0] ?? null,
       evidenceCids,
-      methodology:
-        (report.metadata as { methodology?: string } | null)?.methodology ?? '',
+      methodology: (report.metadata as { methodology?: string } | null)?.methodology ?? '',
       status: report.status,
       confidenceScore: report.confidenceScore,
       message: eligible
@@ -89,11 +89,7 @@ export class CarbonCreditsService {
    * Issue 1 credit per verified tonne for the project's latest VERIFIED report.
    * Only AUDITOR/ADMIN may trigger issuance (mirrors the Stage 3 verify gate).
    */
-  async issue(
-    dto: IssueCreditDto,
-    actor: { id: string; role: Role },
-  ): Promise<IssueCreditResponseDto> {
-    // RBAC: only AUDITOR / ADMIN may issue credits.
+  async issue(dto: IssueCreditDto, actor: { id: string; role: Role }): Promise<IssueCreditResponseDto> {
     if (actor.role !== Role.AUDITOR && actor.role !== Role.ADMIN) {
       throw new ForbiddenException('Only AUDITOR or ADMIN may issue carbon credits.');
     }
@@ -105,7 +101,34 @@ export class CarbonCreditsService {
       );
     }
 
+    // The recipient is a wallet address; map it to a VerdiCred user (if any).
+    const ownerUser = await this.prisma.user.findFirst({ where: { walletAddress: dto.recipient } });
+    if (!ownerUser) {
+      throw new BadRequestException(
+        `Recipient wallet ${dto.recipient} is not linked to any VerdiCred user. ` +
+          `Connect that wallet to a VerdiCred account first.`,
+      );
+    }
+
+    const project = await this.prisma.project.findUnique({ where: { id: dto.projectId } });
+    const projectType: string = project?.projectType ?? 'REFORESTATION';
+
     const result = await this.solana.issue(report, dto.recipient, dto.vintage);
+    const vintage = this.adapter.toMintArgs(report, dto.vintage).vintage;
+
+    // Create / update the off-chain Holding so the developer has a canonical
+    // ownership record that mirrors the on-chain ATA balance.
+    await this.upsertHolding({
+      ownerId: ownerUser.id,
+      walletAddress: dto.recipient,
+      projectId: dto.projectId,
+      tokenMint: result.mint,
+      projectName: report.projectName,
+      projectType,
+      methodology: (report.metadata?.methodology as string) ?? '',
+      vintage,
+      amount: result.amount,
+    });
 
     this.logger.log(
       `Issued ${result.amount} credits for project ${dto.projectId} by ${actor.id} (tx=${result.txSignature})`,
@@ -117,8 +140,45 @@ export class CarbonCreditsService {
       mint: result.mint,
       amount: result.amount,
       projectId: dto.projectId,
-      vintage: this.adapter.toMintArgs(report, dto.vintage).vintage,
+      vintage,
     };
+  }
+
+  /** Create or top-up a Holding for a developer after a real on-chain mint. */
+  private async upsertHolding(input: {
+    ownerId: string;
+    walletAddress: string;
+    projectId: string;
+    tokenMint: string;
+    projectName: string;
+    projectType: string;
+    methodology: string;
+    vintage: number;
+    amount: number;
+  }) {
+    // One holding per (user, mint). Top up the available balance on re-issue.
+    const existing = await this.prisma.holding.findUnique({
+      where: { ownerId_tokenMint: { ownerId: input.ownerId, tokenMint: input.tokenMint } },
+    });
+    if (existing) {
+      return this.prisma.holding.update({
+        where: { id: existing.id },
+        data: { availableBalance: { increment: input.amount } },
+      });
+    }
+    return this.prisma.holding.create({
+      data: {
+        ownerId: input.ownerId,
+        walletAddress: input.walletAddress,
+        projectId: input.projectId,
+        tokenMint: input.tokenMint,
+        projectName: input.projectName,
+        projectType: input.projectType as any,
+        methodology: input.methodology,
+        vintage: input.vintage,
+        availableBalance: input.amount,
+      },
+    });
   }
 
   /** Build an owner-signed-ready transfer transaction. */
@@ -127,13 +187,7 @@ export class CarbonCreditsService {
   }
 
   /** Build an owner-signed-ready retire transaction. */
-  async retire(
-    mint: string,
-    owner: string,
-    amount: number,
-    reason: string,
-    reportRef: string,
-  ) {
+  async retire(mint: string, owner: string, amount: number, reason: string, reportRef: string) {
     return this.solana.buildRetireTx(mint, owner, amount, reason, reportRef);
   }
 

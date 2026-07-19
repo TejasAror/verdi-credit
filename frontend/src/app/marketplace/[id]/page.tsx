@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { useWallet } from '@/lib/wallet-context';
-import { getListing, buyListing, cancelListing } from '@/lib/api';
+import { getListing, buyListing, cancelListing, prepareBuyListing } from '@/lib/api';
 import { Listing } from '@/lib/types';
 import WalletButton from '@/components/WalletButton';
 
@@ -21,7 +21,7 @@ export default function CreditDetailsPage({
   const { id } = use(params);
   const router = useRouter();
   const { session, token, signOut, loading } = useAuth();
-  const { address, connected, signMessage } = useWallet();
+  const { address, connected, submitTransaction } = useWallet();
 
   const [listing, setListing] = useState<Listing | null>(null);
   const [pageLoading, setPageLoading] = useState(true);
@@ -63,11 +63,12 @@ export default function CreditDetailsPage({
     setError(null);
     setNotice(null);
     try {
-      // Authorize the purchase by signing a message with the connected wallet.
-      await signMessage(
-        `VerdiCred purchase authorization\nlisting:${listing.id}\ncredit:${listing.creditId}\nprice:${listing.price}`,
-      );
-      const updated = await buyListing(token, listing.id, address);
+      // Client-signed settlement: ask the backend for a ready-to-sign transfer
+      // tx, have the seller's Phantom wallet sign + submit it, then record the
+      // returned signature with the backend.
+      const prepared = await prepareBuyListing(token, listing.id, address);
+      const txSignature = await submitTransaction(prepared.transaction);
+      const updated = await buyListing(token, listing.id, address, { txSignature });
       setListing(updated);
       setNotice(
         `Purchase complete. Ownership transferred to your wallet (tx ${short(
@@ -79,7 +80,7 @@ export default function CreditDetailsPage({
     } finally {
       setBusy(false);
     }
-  }, [token, listing, address, signMessage]);
+  }, [token, listing, address, submitTransaction]);
 
   const handleCancel = useCallback(async () => {
     if (!token || !listing || !address) return;

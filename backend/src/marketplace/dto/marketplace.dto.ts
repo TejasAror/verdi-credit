@@ -89,6 +89,22 @@ export class BuyListingDto {
   @IsString()
   @Matches(BASE58, { message: 'buyer must be a valid base58 Solana address' })
   buyer: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Seller signing secret (JSON array / base58 / csv) for server-side settlement. Only used in the automated / managed-custody flow. In the production client-signed flow the frontend signs the prepared tx instead.',
+  })
+  @IsOptional()
+  @IsString()
+  sellerSecret?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Already-submitted on-chain transfer signature (client-signed flow). When present, the backend records it as the settlement proof and performs no further chain write. Mutually exclusive with sellerSecret.',
+  })
+  @IsOptional()
+  @Matches(BASE58, { message: 'txSignature must be a valid base58 Solana signature' })
+  txSignature?: string;
 }
 
 /** POST /marketplace/listings/:id/cancel — cancel a listing. */

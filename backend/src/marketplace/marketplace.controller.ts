@@ -106,6 +106,26 @@ export class MarketplaceController {
     return this.marketplace.buy(id, dto, actor);
   }
 
+  @Post('listings/:id/buy-prepare')
+  @ApiBearerAuth('supabase-jwt')
+  @ApiOperation({
+    summary: 'Prepare an owner-signed purchase (transfer) transaction',
+    description:
+      'Validates the listing is ACTIVE and returns a base64-encoded `transferCredit` transaction for the seller wallet to sign with Phantom. Submit the returned signature via POST /marketplace/listings/:id/buy (client-signed settlement).',
+  })
+  @ApiParam({ name: 'id', description: 'Listing id (uuid)' })
+  @ApiResponse({ status: 201, description: 'Ready-to-sign transaction.' })
+  @ApiResponse({ status: 400, description: 'Listing not ACTIVE or self-purchase.' })
+  @ApiResponse({ status: 404, description: 'Listing not found.' })
+  buyPrepare(
+    @Param('id') id: string,
+    @Body() dto: BuyListingDto,
+    @CurrentUser() actor: Actor,
+  ): Promise<{ transaction: string; seller: string; listingId: string; amount: number }> {
+    if (!actor?.id) throw new ForbiddenException('Authentication required.');
+    return this.marketplace.prepareBuy(id, actor, dto.buyer);
+  }
+
   @Post('listings/:id/cancel')
   @ApiBearerAuth('supabase-jwt')
   @ApiOperation({

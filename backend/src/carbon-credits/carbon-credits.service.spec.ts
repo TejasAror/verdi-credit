@@ -3,8 +3,10 @@ import { ForbiddenException, BadRequestException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CarbonCreditsService } from './carbon-credits.service';
 import { SolanaIssuanceService } from './solana-issuance.service';
+import { SolanaConfigService } from './solana-config.service';
 import { Stage3ToOnchainAdapter } from './adapters/stage3-to-onchain.adapter';
 import { VerificationService } from '../verification/verification.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 // Mock the Solana service with a factory so Jest never loads @coral-xyz/anchor
 // (an ESM package that ts-jest cannot transform). The real class is replaced by
@@ -49,7 +51,33 @@ describe('CarbonCreditsService', () => {
         CarbonCreditsService,
         { provide: VerificationService, useValue: verification },
         { provide: SolanaIssuanceService, useValue: solana },
+        {
+          provide: SolanaConfigService,
+          useValue: {
+            programId: { toBase58: () => 'stubProgram' },
+            creditMint: { toBase58: () => 'stubMint' },
+            cluster: 'devnet',
+            explorerTx: (s: string) => `https://explorer.solana.com/tx/${s}?cluster=devnet`,
+            explorerAccount: (a: string) => `https://explorer.solana.com/address/${a}?cluster=devnet`,
+          },
+        },
         Stage3ToOnchainAdapter,
+        {
+          provide: PrismaService,
+          useValue: {
+            user: {
+              findFirst: jest
+                .fn()
+                .mockResolvedValue({ id: 'owner-user-1', walletAddress: '11111111111111111111111111111111' }),
+            },
+            project: { findUnique: jest.fn().mockResolvedValue({ id: 'proj-abc', projectType: 'REFORESTATION' }) },
+            holding: {
+              findUnique: jest.fn().mockResolvedValue(null),
+              create: jest.fn().mockResolvedValue({ id: 'holding-1' }),
+              update: jest.fn().mockResolvedValue({ id: 'holding-1' }),
+            },
+          },
+        },
       ],
     }).compile();
 

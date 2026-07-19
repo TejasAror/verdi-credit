@@ -161,3 +161,79 @@ export interface CreateListingRequest {
   verifiedTonnes?: number;
   reportCid?: string;
 }
+
+// ---- Stage 6: Credit Retirement ----
+
+export type RetirementReasonCategory =
+  | 'NET_ZERO'
+  | 'CORPORATE_ESG'
+  | 'CARBON_OFFSET'
+  | 'COMPLIANCE'
+  | 'CUSTOM';
+
+export type RetirementStatus = 'PENDING' | 'CONFIRMED' | 'CERTIFIED';
+
+/** A credit holding the user owns and may retire. */
+export interface Holding {
+  id: string;
+  projectId: string;
+  tokenMint: string;
+  projectName: string;
+  projectType: ProjectType;
+  methodology: string;
+  vintage: number;
+  availableBalance: number;
+  totalRetired: number;
+  walletAddress: string;
+}
+
+/** POST /retirements — request. */
+export interface RetireCreditsRequest {
+  holdingId: string;
+  amount: number;
+  reasonCategory: RetirementReasonCategory;
+  reason: string;
+  walletAddress?: string;
+  organization?: string;
+  /** Server-signed settlement: backend signs + submits the burn. */
+  ownerSecret?: string;
+  /** Client-signed settlement: an already-submitted on-chain burn signature. */
+  txSignature?: string;
+}
+
+/** A single retirement record (GET /retirements[/:id]). */
+export interface Retirement {
+  id: string;
+  retirementId: string;
+  projectId: string;
+  tokenMint: string;
+  retiredAmount: number;
+  retiredBy: string;
+  walletAddress: string;
+  reason: string;
+  reasonCategory: RetirementReasonCategory;
+  transactionSignature: string;
+  certificateCid: string | null;
+  certificateUrl: string | null;
+  status: RetirementStatus;
+  organization: string | null;
+  projectName: string | null;
+  methodology: string | null;
+  vintage: number | null;
+  explorerUrl: string | null;
+  ipfsUrl: string | null;
+  certificateId: string | null;
+  verifyUrl: string | null;
+  timestamp: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** GET /retirements — paged response. */
+export interface RetirementHistoryResponse {
+  items: Retirement[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}

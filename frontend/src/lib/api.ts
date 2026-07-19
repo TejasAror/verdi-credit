@@ -127,10 +127,18 @@ export function createListing(
   });
 }
 
-/** POST /marketplace/listings/:id/buy — purchase a listing. */
-export function buyListing(token: string, id: string, buyer: string) {
+/** POST /marketplace/listings/:id/buy — purchase a listing (server-or-client settlement). */
+export function buyListing(token: string, id: string, buyer: string, extra?: { sellerSecret?: string; txSignature?: string }) {
   return apiFetch<import('./types').Listing>(
     `/marketplace/listings/${encodeURIComponent(id)}/buy`,
+    { method: 'POST', token, body: JSON.stringify({ buyer, ...extra }) },
+  );
+}
+
+/** POST /marketplace/listings/:id/buy-prepare — build a seller-signed transfer tx (client-signed flow). */
+export function prepareBuyListing(token: string, id: string, buyer: string) {
+  return apiFetch<{ transaction: string; seller: string; listingId: string; amount: number }>(
+    `/marketplace/listings/${encodeURIComponent(id)}/buy-prepare`,
     { method: 'POST', token, body: JSON.stringify({ buyer }) },
   );
 }
@@ -140,5 +148,53 @@ export function cancelListing(token: string, id: string, seller: string) {
   return apiFetch<import('./types').Listing>(
     `/marketplace/listings/${encodeURIComponent(id)}/cancel`,
     { method: 'POST', token, body: JSON.stringify({ seller }) },
+  );
+}
+
+// ---- Credit Retirement (Stage 6) ----
+
+/** GET /retirements/holdings — owned holdings available to retire. */
+export function listHoldings(token: string) {
+  return apiFetch<import('./types').Holding[]>('/retirements/holdings', { token });
+}
+
+/** POST /retirements/prepare — build an owner-signed burn tx (client-signed flow). */
+export function prepareRetirement(token: string, dto: import('./types').RetireCreditsRequest) {
+  return apiFetch<{ transaction: string; owner: string; holdingId: string; amount: number }>(
+    '/retirements/prepare',
+    { method: 'POST', token, body: JSON.stringify(dto) },
+  );
+}
+
+/** POST /retirements — retire owned credits. */
+export function retireCredits(token: string, dto: import('./types').RetireCreditsRequest) {
+  return apiFetch<import('./types').Retirement>('/retirements', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(dto),
+  });
+}
+
+/** GET /retirements — paged, searchable, filterable retirement history. */
+export function listRetirements(
+  token: string,
+  params: Record<string, string | number | undefined> = {},
+) {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== '' && v !== null) qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return apiFetch<import('./types').RetirementHistoryResponse>(
+    `/retirements${q ? `?${q}` : ''}`,
+    { token },
+  );
+}
+
+/** GET /retirements/:id — single retirement detail. */
+export function getRetirement(token: string, id: string) {
+  return apiFetch<import('./types').Retirement>(
+    `/retirements/${encodeURIComponent(id)}`,
+    { token },
   );
 }

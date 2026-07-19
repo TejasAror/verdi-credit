@@ -1,14 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomBytes } from 'crypto';
+import { Keypair } from '@solana/web3.js';
+import { SolanaIssuanceService } from '../carbon-credits/solana-issuance.service';
+import { SolanaConfigService } from '../carbon-credits/solana-config.service';
 
-/**
- * Result of a settled on-chain (or mock) operation.
- */
+/** Result of a settled on-chain (or mock) operation. */
 export interface SettlementResult {
-  /** Transaction signature (base58-ish). Mock signatures are prefixed `mock_`. */
+  /** Transaction signature (base58). */
   txSignature: string;
-  /** Whether a real on-chain transaction was submitted (false in mock mode). */
+  /** Whether a real on-chain transaction was submitted. */
   onChain: boolean;
   /** Slot / block height when known (null in mock mode). */
   slot: number | null;
@@ -18,11 +18,31 @@ export interface SettlementResult {
 
 /** Parameters for a marketplace purchase settlement. */
 export interface PurchaseSettlement {
-  creditId: string; // on-chain mint / batch id
+  creditId: string; // on-chain mint
   seller: string; // seller wallet (base58)
   buyer: string; // buyer wallet (base58)
   amount: number; // credits (tonnes) transferred
   price: number; // sale price (USDC / platform unit)
+  /**
+   * Seller signing secret (JSON array / base58 / csv). Supplied only in the
+   * server-settlement flow (automated tests / managed custody): the backend
+   * signs + submits the `transferCredit` tx.
+   */
+  sellerSecret?: string;
+  /**
+   * An already-submitted on-chain transfer signature (client-signed flow). When
+   * present, no further chain write happens — the signature is recorded as the
+   * settlement proof.
+   */
+  txSignature?: string;
+}
+
+/** A serialized, owner-signed-ready transfer transaction (base64). */
+export interface PreparedTransferTx {
+  /** base64-encoded Transaction for the seller wallet to sign + submit. */
+  transaction: string;
+  /** The seller wallet that must sign. */
+  seller: string;
 }
 
 /** Parameters for verifying a wallet owns a credit before listing. */
@@ -35,120 +55,129 @@ export interface OwnershipQuery {
 /**
  * BlockchainService — the single seam between the marketplace and Solana.
  *
- * Stage 5 ships a MOCK implementation so the marketplace works end-to-end
- * without the Stage 4 program being deployed. Every blockchain interaction the
- * marketplace needs is funneled through this service:
+ * This is the PRODUCTION implementation: there is no mock mode. Every
+ * marketplace interaction is settled against the live CarbonCreditProgram on
+ * Devnet (program id 41jbri…, resolved from SOLANA_PROGRAM_ID):
  *
- *   - `verifyOwnership`  : does `wallet` hold `amount` of `creditId`?
- *   - `settlePurchase`   : transfer credits seller → buyer + settle payment.
- *   - `getExplorerUrl`   : link a settlement tx to an explorer.
+ *   - `verifyOwnership`  : reads the seller's on-chain Token-2022 ATA balance
+ *                          for the credit mint and compares it to `amount`.
+ *   - `settlePurchase`   : transfers `amount` of the credit mint from the
+ *                          seller wallet to the buyer wallet via the program's
+ *                          `transferCredit` instruction. When `sellerSecret` is
+ *                          provided (server-settlement / automated flow) the
+ *                          backend signs + submits; otherwise it throws and the
+ *                          caller must use the prepared-tx client flow.
+ *   - `getExplorerUrl`   : links a settlement tx to the Solana Explorer.
  *
- * When the Stage 4 program is deployed, ONLY this class changes: the mock
- * bodies are replaced with real SPL Token-2022 transfer + settlement calls
- * (reusing the PDA / oracle plumbing already in SolanaIssuanceService). The
- * marketplace controller, service, DTOs and the entire frontend remain
- * untouched because they depend on this stable interface, not on chain details.
- *
- * Mock vs real is selected by `MARKETPLACE_ONCHAIN=true` + a configured
- * `SOLANA_PROGRAM_ID`. Absent those, the service stays in mock mode and logs a
- * clear warning so nobody mistakes a mock signature for a real settlement.
+ * The marketplace controller, service, DTOs and frontend depend only on this
+ * stable interface, not on chain details.
  */
 @Injectable()
 export class BlockchainService {
   private readonly logger = new Logger(BlockchainService.name);
 
-  /** True when running the mock settlement layer (no real chain writes). */
-  readonly mockMode: boolean;
+  /** Always true in the production integration (no mock fallback). */
+  readonly mockMode = false;
 
-  constructor(private readonly config: ConfigService) {
-    const onChain =
-      this.config.get<string>('MARKETPLACE_ONCHAIN', 'false') === 'true';
-    const programId = this.config.get<string>('SOLANA_PROGRAM_ID');
-    this.mockMode = !onChain || !programId;
-
-    if (this.mockMode) {
-      this.logger.warn(
-        'BlockchainService running in MOCK mode: marketplace settlements are ' +
-          'simulated (no real SPL Token-2022 transfer). Set MARKETPLACE_ONCHAIN=true ' +
-          'and SOLANA_PROGRAM_ID to enable on-chain settlement once Stage 4 is deployed.',
-      );
-    } else {
-      this.logger.log(
-        `BlockchainService ready for on-chain settlement (program=${programId}).`,
-      );
-    }
-  }
+  constructor(
+    private readonly config: ConfigService,
+    private readonly solana: SolanaIssuanceService,
+    private readonly solanaConfig: SolanaConfigService,
+  ) {}
 
   /**
-   * Verify that `wallet` currently owns at least `amount` of `creditId`.
-   *
-   * MOCK: always returns true (any wallet may list). REAL: read the owner's
-   * Token-2022 associated token account balance for the mint and compare.
+   * Verify that `wallet` currently owns at least `amount` of `creditId` by
+   * reading the on-chain Token-2022 associated token account balance.
    */
   async verifyOwnership(query: OwnershipQuery): Promise<boolean> {
-    if (this.mockMode) {
-      this.logger.debug(
-        `[mock] verifyOwnership creditId=${query.creditId} wallet=${query.wallet} amount=${query.amount} -> true`,
-      );
-      return true;
-    }
-    // REAL implementation (Stage 4 deployed) — replace mock above:
-    //   const ata = getAssociatedTokenAddressSync(mintPk, walletPk, false, TOKEN_2022_PROGRAM_ID);
-    //   const bal = await connection.getTokenAccountBalance(ata);
-    //   return Number(bal.value.amount) >= query.amount;
-    throw new Error('On-chain verifyOwnership not yet implemented.');
+    const balance = await this.solana.getTokenBalance(query.wallet);
+    const ok = balance >= query.amount;
+    this.logger.debug(
+      `verifyOwnership creditId=${query.creditId} wallet=${query.wallet} ` +
+        `onChainBalance=${balance} required=${query.amount} -> ${ok}`,
+    );
+    return ok;
   }
 
   /**
-   * Settle a marketplace purchase: transfer `amount` of `creditId` from the
-   * seller wallet to the buyer wallet and settle the `price` payment.
+   * Settle a marketplace purchase: transfer `amount` of the credit mint from
+   * the seller wallet to the buyer wallet via `transferCredit`.
    *
-   * MOCK: returns a synthetic settlement result immediately. REAL: build,
-   * (oracle- or buyer-) sign and submit the Token-2022 transfer + payment
-   * transaction, then return the confirmed signature + slot.
+   * Three resolution paths, in priority order:
+   *   1. `txSignature` supplied — the seller already submitted the transfer with
+   *      their wallet (client-signed flow); record it as the settlement proof.
+   *   2. `sellerSecret` supplied — the backend signs + submits the tx
+   *      server-side (automated e2e tests / managed-custody).
+   *   3. neither supplied — throw; the caller must use `buildTransferTx`, have
+   *      the seller sign in the wallet, submit, then record via the signature.
    */
   async settlePurchase(params: PurchaseSettlement): Promise<SettlementResult> {
-    if (this.mockMode) {
-      const txSignature = `mock_${randomBytes(24).toString('hex')}`;
+    if (params.txSignature) {
       this.logger.log(
-        `[mock] settlePurchase creditId=${params.creditId} ` +
-          `${params.seller} -> ${params.buyer} amount=${params.amount} ` +
-          `price=${params.price} tx=${txSignature}`,
+        `[client-signed] settlePurchase creditId=${params.creditId} ` +
+          `seller=${params.seller} -> buyer=${params.buyer} tx=${params.txSignature}`,
       );
       return {
-        txSignature,
-        onChain: false,
+        txSignature: params.txSignature,
+        onChain: true,
         slot: null,
         settledAt: new Date().toISOString(),
       };
     }
-    // REAL implementation (Stage 4 deployed) — replace mock above:
-    //   const tx = await program.methods.transferCredit(new BN(params.amount))...
-    //   const sig = await sendAndConfirm(tx);
-    //   return { txSignature: sig, onChain: true, slot, settledAt };
-    throw new Error('On-chain settlePurchase not yet implemented.');
+    if (!params.sellerSecret) {
+      throw new Error(
+        'Purchase requires either a client-submitted txSignature or a sellerSecret ' +
+          '(server-settlement). Use POST /marketplace/listings/:id/buy-prepare to obtain a ' +
+          'ready-to-sign transfer transaction for the seller wallet.',
+      );
+    }
+    const sellerKeypair = BlockchainService.parseSecret(params.sellerSecret);
+    const txSignature = await this.solana.signTransfer(
+      params.creditId,
+      params.seller,
+      params.buyer,
+      params.amount,
+      sellerKeypair,
+    );
+    return {
+      txSignature,
+      onChain: true,
+      slot: null,
+      settledAt: new Date().toISOString(),
+    };
   }
 
   /**
-   * Settle a listing cancellation. In mock mode this is a no-op record; in the
-   * real implementation there is typically nothing to settle on chain for a
-   * cancel (the credits never left the seller's wallet under an escrow-less
-   * model), but the hook exists for escrow-based designs.
+   * Build a base64 seller-signed-ready `transferCredit` transaction. The
+   * frontend signs it with the seller's Phantom wallet and submits it to the
+   * cluster, then calls `POST /marketplace/listings/:id/buy` with the resulting
+   * signature (client-signed settlement).
+   */
+  async buildTransferTx(params: {
+    creditId: string;
+    seller: string;
+    buyer: string;
+    amount: number;
+  }): Promise<PreparedTransferTx> {
+    const prepared = await this.solana.buildTransferTx(
+      params.creditId,
+      params.seller,
+      params.buyer,
+      params.amount,
+    );
+    return {
+      transaction: prepared.transaction,
+      seller: prepared.requiresSigner,
+    };
+  }
+
+  /**
+   * Settle a listing cancellation. The credits never left the seller's wallet
+   * under this escrow-less model, so there is nothing to settle on chain — but
+   * we still return a verifiable result so the listing record stays consistent.
    */
   async settleCancellation(creditId: string, seller: string): Promise<SettlementResult> {
-    if (this.mockMode) {
-      const txSignature = `mock_cancel_${randomBytes(16).toString('hex')}`;
-      this.logger.log(
-        `[mock] settleCancellation creditId=${creditId} seller=${seller} tx=${txSignature}`,
-      );
-      return {
-        txSignature,
-        onChain: false,
-        slot: null,
-        settledAt: new Date().toISOString(),
-      };
-    }
-    // REAL: release escrow / close listing PDA if an escrow model is used.
+    this.logger.log(`settleCancellation creditId=${creditId} seller=${seller} (no on-chain action; escrow-less)`);
     return {
       txSignature: '',
       onChain: true,
@@ -157,10 +186,22 @@ export class BlockchainService {
     };
   }
 
-  /** Build an explorer URL for a settlement signature (null for mock txs). */
+  /** Build an explorer URL for a settlement signature. */
   getExplorerUrl(txSignature: string): string | null {
-    if (!txSignature || txSignature.startsWith('mock')) return null;
-    const cluster = this.config.get<string>('SOLANA_CLUSTER', 'devnet');
-    return `https://explorer.solana.com/tx/${txSignature}?cluster=${cluster}`;
+    if (!txSignature) return null;
+    return this.solanaConfig.explorerTx(txSignature);
+  }
+
+  private static parseSecret(secret: string): Keypair {
+    const trimmed = secret.trim();
+    if (trimmed.startsWith('[')) {
+      return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(trimmed)));
+    }
+    if (trimmed.includes(',')) {
+      return Keypair.fromSecretKey(Uint8Array.from(trimmed.split(',').map((n) => Number(n.trim()))));
+    }
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const bs58 = require('bs58');
+    return Keypair.fromSecretKey(bs58.decode(trimmed));
   }
 }

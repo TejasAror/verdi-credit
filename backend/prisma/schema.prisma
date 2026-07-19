@@ -29,18 +29,22 @@ model AuditLog {
 }
 
 model User {
-  id           String     @id @default(uuid())
-  supabaseId   String     @unique
-  email        String     @unique
-  fullName     String?
-  role         Role       @default(BUYER)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  auditActions AuditLog[] @relation("AuditLogActor")
-  auditTargets AuditLog[] @relation("AuditLogTarget")
-  projects     Project[]
+  id            String     @id @default(uuid())
+  supabaseId    String     @unique
+  email         String     @unique
+  fullName      String?
+  walletAddress String?    @unique
+  role          Role       @default(BUYER)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  auditActions  AuditLog[] @relation("AuditLogActor")
+  auditTargets  AuditLog[] @relation("AuditLogTarget")
+  projects      Project[]
+  holdings      Holding[]
+  retirements   Retirement[]
 
   @@index([role])
+  @@index([walletAddress])
 }
 
 model Project {
@@ -57,6 +61,8 @@ model Project {
   evidence             Evidence[]
   owner                User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   VerificationReport   VerificationReport[]
+  holdings             Holding[]
+  retirements          Retirement[]
 
   @@index([ownerId])
   @@index([status])
@@ -102,6 +108,106 @@ model VerificationReport {
   @@index([createdAt])
 }
 
+/// A credit holding represents credits a VerdiCred user owns at a given
+/// token mint. `availableBalance` is the canonical off-chain ownership /
+/// balance record. Retiring credits decrements `availableBalance`; the
+/// amount removed can never be transferred or listed again because the
+/// underlying on-chain tokens are burned and a Retirement row is written.
+model Holding {
+  id              String   @id @default(uuid())
+  ownerId         String
+  walletAddress   String
+  projectId       String
+  tokenMint       String
+  projectName     String
+  projectType     ProjectType
+  methodology     String
+  vintage         Int
+  availableBalance Int
+  totalRetired    Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  owner           User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  retirements     Retirement[]
+
+  @@unique([ownerId, tokenMint])
+  @@index([ownerId])
+  @@index([walletAddress])
+  @@index([projectId])
+  @@index([tokenMint])
+}
+
+/// An immutable record of a credit retirement (burn / lock). Once written the
+/// retired credits can never re-enter circulation. `certificateCid` stores only
+/// the IPFS CID of the generated PDF Retirement Certificate (the PDF itself
+/// lives off-chain on IPFS). `status` transitions PENDING -> CONFIRMED ->
+/// CERTIFIED and is never reset.
+model Retirement {
+  id                String           @id @default(uuid())
+  retirementId      String           @unique
+  holdingId         String
+  projectId         String
+  tokenMint         String
+  retiredAmount     Int
+  retiredBy         String
+  walletAddress     String
+  reason            String
+  reasonCategory    String
+  transactionSignature String
+  certificateCid    String?
+  certificateUrl    String?
+  status            RetirementStatus @default(PENDING)
+  organization      String?
+  projectName       String?
+  methodology       String?
+  vintage           Int?
+  metadata          Json?
+  timestamp         DateTime
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  holder            User             @relation(fields: [retiredBy], references: [id], onDelete: Cascade)
+  holding           Holding          @relation(fields: [holdingId], references: [id], onDelete: Cascade)
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([retiredBy])
+  @@index([walletAddress])
+  @@index([projectId])
+  @@index([tokenMint])
+  @@index([holdingId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Listing {
+  id            String        @id @default(uuid())
+  creditId      String
+  seller        String
+  buyer         String?
+  price         Float
+  amount        Int           @default(1)
+  status        ListingStatus @default(ACTIVE)
+  sellerUserId  String?
+  projectId     String?
+  projectName   String?
+  projectType   ProjectType?
+  methodology   String?
+  vintage       Int?
+  verifiedTonnes Float?
+  reportCid     String?
+  metadata      Json?
+  txSignature   String?
+  settledAt     DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([status])
+  @@index([seller])
+  @@index([creditId])
+  @@index([sellerUserId])
+  @@index([createdAt])
+}
+
 enum Role {
   DEVELOPER
   BUYER
@@ -137,6 +243,18 @@ enum EvidenceStatus {
   REJECTED
 }
 
+enum RetirementStatus {
+  PENDING
+  CONFIRMED
+  CERTIFIED
+}
+
+enum ListingStatus {
+  ACTIVE
+  SOLD
+  CANCELLED
+}
+
 enum AuditLogAction {
   ROLE_CHANGED
   ROLE_PROMOTED
@@ -144,4 +262,6 @@ enum AuditLogAction {
   EVIDENCE_UPLOADED
   EVIDENCE_DELETED
   EVIDENCE_VIEWED
+  CREDIT_RETIRED
+  RETIREMENT_CERTIFIED
 }

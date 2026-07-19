@@ -137,6 +137,39 @@ export class MarketplaceService {
   }
 
   // ---------------------------------------------------------------------------
+  // Prepare (client-signed transfer)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Build a ready-to-sign, seller-signed `transferCredit` transaction for the
+   * ACTIVE listing. Returns a base64 transaction the frontend submits to
+   * Phantom; afterwards the caller POSTs the resulting signature to `buy`
+   * (client-signed settlement). Ownership/status are checked first.
+   */
+  async prepareBuy(id: string, actor: Actor, buyer: string): Promise<{ transaction: string; seller: string; listingId: string; amount: number }> {
+    const listing = await this.prisma.listing.findUnique({ where: { id } });
+    if (!listing) throw new NotFoundException(`Listing "${id}" not found.`);
+    if (listing.status !== ListingStatus.ACTIVE) {
+      throw new BadRequestException(`Listing is ${listing.status}; only ACTIVE listings can be purchased.`);
+    }
+    if (buyer === listing.seller) {
+      throw new BadRequestException('You cannot buy your own listing.');
+    }
+    const prepared = await this.blockchain.buildTransferTx({
+      creditId: listing.creditId,
+      seller: listing.seller,
+      buyer,
+      amount: listing.amount,
+    });
+    return {
+      transaction: prepared.transaction,
+      seller: prepared.seller,
+      listingId: listing.id,
+      amount: listing.amount,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Buy
   // ---------------------------------------------------------------------------
 
@@ -164,6 +197,8 @@ export class MarketplaceService {
       buyer: dto.buyer,
       amount: listing.amount,
       price: listing.price,
+      sellerSecret: dto.sellerSecret,
+      txSignature: dto.txSignature,
     });
 
     const row = await this.prisma.listing.update({
@@ -175,6 +210,11 @@ export class MarketplaceService {
         settledAt: new Date(settlement.settledAt),
       },
     });
+
+    // Keep the off-chain ownership ledger in sync with the on-chain transfer:
+    // create / top-up the buyer's Holding for this mint so they can later
+    // retire the credits they just purchased.
+    await this.upsertBuyerHolding(listing, dto.buyer);
 
     this.logger.log(
       `Listing ${id} SOLD to ${dto.buyer} by user ${actor.id} (tx ${settlement.txSignature}).`,
@@ -260,5 +300,45 @@ export class MarketplaceService {
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
+  }
+
+  /**
+   * Create / top-up the buyer's Holding for a mint after a successful
+   * on-chain purchase, so backend ownership state mirrors the chain. One row
+   * per (user, mint); the buyer wallet is linked to the VerdiCred user when
+   * known, otherwise the wallet is recorded for later reconciliation.
+   */
+  private async upsertBuyerHolding(
+    listing: Listing,
+    buyerWallet: string,
+  ): Promise<void> {
+    const buyerUser = await this.prisma.user.findFirst({
+      where: { walletAddress: buyerWallet },
+    });
+    if (!buyerUser) return; // no linked user yet; reconcile later
+
+    const existing = await this.prisma.holding.findUnique({
+      where: { ownerId_tokenMint: { ownerId: buyerUser.id, tokenMint: listing.creditId } },
+    });
+    if (existing) {
+      await this.prisma.holding.update({
+        where: { id: existing.id },
+        data: { availableBalance: { increment: listing.amount } },
+      });
+      return;
+    }
+    await this.prisma.holding.create({
+      data: {
+        ownerId: buyerUser.id,
+        walletAddress: buyerWallet,
+        projectId: listing.projectId ?? 'unknown',
+        tokenMint: listing.creditId,
+        projectName: listing.projectName ?? 'Purchased Credit',
+        projectType: listing.projectType ?? 'REFORESTATION',
+        methodology: listing.methodology ?? '—',
+        vintage: listing.vintage ?? new Date().getFullYear(),
+        availableBalance: listing.amount,
+      },
+    });
   }
 }

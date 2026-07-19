@@ -264,11 +264,26 @@ export class VerificationService {
     }
 
     score = Math.round(clamp(score, this.SCORE_FLOOR, this.SCORE_CEIL));
-    score = 95;
 
-    const status = ProjectStatus.VERIFIED;
-
-    notes.push('Status VERIFIED (MVP demo mode).');
+    // Status derivation — Stage 3 §4.4.
+    // A duplicate CID is a hard fail regardless of the numeric score; otherwise
+    // the thresholds decide VERIFIED vs PENDING_VERIFICATION vs REJECTED.
+    const hasDuplicateCid = anomalies.some((a) => a.type === 'DUPLICATE_CID');
+    let status: ProjectStatus;
+    if (hasDuplicateCid || score < this.REJECT_THRESHOLD) {
+      status = ProjectStatus.REJECTED;
+      notes.push(
+        `Status REJECTED (${hasDuplicateCid ? 'duplicate CID present' : `score ${score} < ${this.REJECT_THRESHOLD}`}).`,
+      );
+    } else if (score >= this.VERIFIED_THRESHOLD) {
+      status = ProjectStatus.VERIFIED;
+      notes.push(`Status VERIFIED (score ${score} ≥ ${this.VERIFIED_THRESHOLD}).`);
+    } else {
+      status = ProjectStatus.PENDING_VERIFICATION;
+      notes.push(
+        `Status PENDING_VERIFICATION (${this.REJECT_THRESHOLD} ≤ score ${score} < ${this.VERIFIED_THRESHOLD}).`,
+      );
+    }
 
     return { confidenceScore: score, status, notes };
   }

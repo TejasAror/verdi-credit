@@ -59,6 +59,28 @@ export class AuditLogService {
   }
 
   /**
+   * Records a generic audit event with no evidence linkage (e.g. a credit
+   * retirement). `evidenceId` is left null so the audit row does not have to
+   * reference an Evidence record. Used by Stage 6 retirement logging.
+   */
+  async recordAction(params: {
+    actorId: string;
+    targetId: string;
+    action: AuditLogAction;
+    reason?: string;
+  }): Promise<AuditLogEntry> {
+    return this.prisma.auditLog.create({
+      data: {
+        actorId: params.actorId,
+        targetId: params.targetId,
+        action: params.action,
+        reason: params.reason,
+        evidenceId: null,
+      },
+    });
+  }
+
+  /**
    * Records an evidence-related audit event (upload / delete / view).
    * Role fields are left null for these actions.
    */

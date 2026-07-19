@@ -5,7 +5,7 @@
  * IDL can be found at `target/idl/carbon_credit_program.json`.
  */
 export type CarbonCreditProgram = {
-  "address": "6Bfxfj5w5HRfaeFJPqvNsbtcvU17u3bhyfzoZnKWK9DV",
+  "address": "41jbriQNyaJLuUfJWennbwVqGTQeBDc94Ywj4pGBarnv",
   "metadata": {
     "name": "carbonCreditProgram",
     "version": "0.1.0",

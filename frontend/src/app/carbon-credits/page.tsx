@@ -173,6 +173,18 @@ export default function CarbonCreditsPage() {
           >
             Marketplace
           </Link>
+          <Link
+            href="/retire-credits"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-100"
+          >
+            Retire
+          </Link>
+          <Link
+            href="/retirement-history"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-100"
+          >
+            History
+          </Link>
           <button
             onClick={signOut}
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-100"
