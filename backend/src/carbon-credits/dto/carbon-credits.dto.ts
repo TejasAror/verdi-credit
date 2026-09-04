@@ -1,6 +1,21 @@
 import { IsBase64, IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+/** GET /carbon-credits/config */
+export class CarbonCreditConfigDto {
+  @ApiProperty({ example: '41jbriQNyaJLuUfJWennbwVqGTQeBDc94Ywj4pGBarnv' })
+  programId: string;
+
+  @ApiProperty({ example: 'devnet' })
+  cluster: string;
+
+  @ApiPropertyOptional({ example: 'DeTknRJ1orhpEBEqCjdYCCRw6JKEPYLiTUVEZCMaH6p9' })
+  creditMint: string | null;
+
+  @ApiProperty({ example: true })
+  onChainEnabled: boolean;
+}
+
 /** GET /carbon-credits/eligible/:projectId */
 export class EligibleResponseDto {
   @ApiProperty({ example: true })

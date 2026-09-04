@@ -4,8 +4,10 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { SupabaseService } from '../../supabase/supabase.service';
 import { UsersService } from '../../users/users.service';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
 /**
  * Validates the Supabase JWT sent in the `Authorization: Bearer <token>`
@@ -22,10 +24,21 @@ export class SupabaseAuthGuard implements CanActivate {
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly usersService: UsersService,
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
+
+    // Public routes (e.g. the Stage 7 explorer) skip authentication entirely.
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) {
+      return true;
+    }
+
     const authHeader: string | undefined = request.headers['authorization'];
 
     if (!authHeader) {

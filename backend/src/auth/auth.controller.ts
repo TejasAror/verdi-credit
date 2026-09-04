@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SupabaseAuthGuard } from './guards/supabase-auth.guard';
 import { AuthService } from './auth.service';
@@ -28,5 +28,25 @@ export class AuthController {
   @ApiOperation({ summary: 'Get the current authenticated profile' })
   getMe(@CurrentUser() user: { supabaseId: string }) {
     return this.authService.getProfile(user);
+  }
+
+  @Post('link-wallet')
+  @UseGuards(SupabaseAuthGuard)
+  @ApiBearerAuth('supabase-jwt')
+  @ApiOperation({
+    summary: 'Link a Phantom wallet to the authenticated user',
+    description:
+      'Verifies a signed message from the wallet to prove ownership, then stores the wallet address on the user profile. Call this after connecting Phantom on the frontend.',
+  })
+  linkWallet(
+    @CurrentUser() user: { supabaseId: string },
+    @Body()
+    dto: {
+      walletAddress: string;
+      signature: string;
+      message: string;
+    },
+  ) {
+    return this.authService.linkWallet(user.supabaseId, dto);
   }
 }

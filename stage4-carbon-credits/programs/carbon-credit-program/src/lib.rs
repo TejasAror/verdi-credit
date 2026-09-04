@@ -4,6 +4,7 @@ use anchor_spl::token_interface::{
     burn, initialize_mint2, mint_to, spl_token_2022::state::Mint as SplMint, Burn,
     InitializeMint2, Mint, MintTo, TokenAccount, TokenInterface, ID as TOKEN_2022_PROGRAM_ID,
 };
+use sha2::{Digest, Sha256};
 
 pub mod constants;
 pub mod errors;
@@ -16,6 +17,18 @@ use crate::events::*;
 use crate::state::*;
 
 declare_id!("41jbriQNyaJLuUfJWennbwVqGTQeBDc94Ywj4pGBarnv");
+
+/// Hash a string to a 32-byte array using SHA-256 for PDA seed compatibility.
+/// Solana PDA seeds must be <= 32 bytes. Variable-length strings like UUIDs,
+/// project names, or CIDs must be deterministically hashed to fixed length.
+fn hash_to_pda_seed(input: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let result = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&result[..32]);
+    out
+}
 
 fn check_len(s: &str, max: usize) -> Result<()> {
     require!(s.len() <= max, CarbonCreditError::StringTooLong);
@@ -143,15 +156,16 @@ pub mod carbon_credit_program {
     /// the static metadata (methodology, evidence CIDs, report CID, status) is
     /// sealed. Subsequent mints for the same batch append to the tallies.
     pub fn mint_credit(ctx: Context<MintCredit>, params: MintParams) -> Result<()> {
-        let MintParams {
-            project_id,
-            vintage,
-            methodology,
-            evidence_cids,
-            report_cid,
-            report_status,
-            verified_tonnes_scaled,
-        } = params;
+    let MintParams {
+        project_id,
+        project_id_hash,
+        vintage,
+        methodology,
+        evidence_cids,
+        report_cid,
+        report_status,
+        verified_tonnes_scaled,
+    } = params;
 
         // --- Validation ---------------------------------------------------
         let cfg = &ctx.accounts.oracle_config;
@@ -228,10 +242,15 @@ pub mod carbon_credit_program {
                 report_cid,
                 CarbonCreditError::BatchMismatch
             );
+            // Verify the provided hash matches the stored hash
+            if batch.project_id_hash != project_id_hash {
+    return err!(CarbonCreditError::BatchMismatch);
+}
         }
         batch.mint = ctx.accounts.credit_mint.key();
         batch.authority = ctx.accounts.verifier_oracle_authority.key();
         batch.project_id = project_id;
+        batch.project_id_hash = project_id_hash;
         batch.vintage = vintage;
         batch.methodology = methodology;
         batch.evidence_cid = evidence_cid;
@@ -460,7 +479,7 @@ pub struct MintCredit<'info> {
         init_if_needed,
         payer = verifier_oracle_authority,
         space = 8 + CreditBatch::INIT_SPACE,
-        seeds = [PROGRAM_SEED, CREDIT_BATCH_SEED, credit_mint.key().as_ref(), params.project_id.as_bytes(), &params.vintage.to_le_bytes()],
+        seeds = [PROGRAM_SEED, CREDIT_BATCH_SEED, credit_mint.key().as_ref(), params.project_id_hash.as_ref(), &params.vintage.to_le_bytes()],
         bump
     )]
     pub credit_batch: Account<'info, CreditBatch>,
@@ -512,7 +531,7 @@ pub struct RetireCredit<'info> {
 
     #[account(
         mut,
-        seeds = [PROGRAM_SEED, CREDIT_BATCH_SEED, credit_mint.key().as_ref(), credit_batch.project_id.as_bytes(), &credit_batch.vintage.to_le_bytes()],
+        seeds = [PROGRAM_SEED, CREDIT_BATCH_SEED, credit_mint.key().as_ref(), credit_batch.project_id_hash.as_ref(), &credit_batch.vintage.to_le_bytes()],
         bump = credit_batch.bump
     )]
     pub credit_batch: Account<'info, CreditBatch>,
@@ -538,6 +557,9 @@ pub struct RetireCredit<'info> {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct MintParams {
     pub project_id: String,
+    /// SHA-256 hash of project_id, truncated to 32 bytes for PDA seed compatibility.
+    /// Must be computed off-chain as: SHA-256(project_id.as_bytes())[0..32]
+    pub project_id_hash: [u8; 32],
     pub vintage: u16,
     pub methodology: String,
     /// All evidence CIDs associated with the verification report.

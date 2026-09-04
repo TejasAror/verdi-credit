@@ -29,19 +29,20 @@ model AuditLog {
 }
 
 model User {
-  id            String     @id @default(uuid())
-  supabaseId    String     @unique
-  email         String     @unique
+  id            String       @id @default(uuid())
+  supabaseId    String       @unique
+  email         String       @unique
   fullName      String?
-  walletAddress String?    @unique
-  role          Role       @default(BUYER)
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-  auditActions  AuditLog[] @relation("AuditLogActor")
-  auditTargets  AuditLog[] @relation("AuditLogTarget")
-  projects      Project[]
-  holdings      Holding[]
-  retirements   Retirement[]
+  role          Role         @default(BUYER)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  walletAddress       String?                 @unique
+  auditActions        AuditLog[]              @relation("AuditLogActor")
+  auditTargets        AuditLog[]              @relation("AuditLogTarget")
+  holdings            Holding[]
+  projects            Project[]
+  retirements         Retirement[]
+  sellerMarketplaceKeys SellerMarketplaceKey[]
 
   @@index([role])
   @@index([walletAddress])
@@ -59,10 +60,10 @@ model Project {
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   evidence             Evidence[]
-  owner                User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  VerificationReport   VerificationReport[]
   holdings             Holding[]
+  owner                User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   retirements          Retirement[]
+  VerificationReport   VerificationReport[]
 
   @@index([ownerId])
   @@index([status])
@@ -114,22 +115,22 @@ model VerificationReport {
 /// amount removed can never be transferred or listed again because the
 /// underlying on-chain tokens are burned and a Retirement row is written.
 model Holding {
-  id              String   @id @default(uuid())
-  ownerId         String
-  walletAddress   String
-  projectId       String
-  tokenMint       String
-  projectName     String
-  projectType     ProjectType
-  methodology     String
-  vintage         Int
+  id               String       @id @default(uuid())
+  ownerId          String
+  walletAddress    String
+  projectId        String
+  tokenMint        String
+  projectName      String
+  projectType      ProjectType
+  methodology      String
+  vintage          Int
   availableBalance Int
-  totalRetired    Int      @default(0)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  owner           User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  retirements     Retirement[]
+  totalRetired     Int          @default(0)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  owner            User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  project          Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  retirements      Retirement[]
 
   @@unique([ownerId, tokenMint])
   @@index([ownerId])
@@ -144,31 +145,31 @@ model Holding {
 /// lives off-chain on IPFS). `status` transitions PENDING -> CONFIRMED ->
 /// CERTIFIED and is never reset.
 model Retirement {
-  id                String           @id @default(uuid())
-  retirementId      String           @unique
-  holdingId         String
-  projectId         String
-  tokenMint         String
-  retiredAmount     Int
-  retiredBy         String
-  walletAddress     String
-  reason            String
-  reasonCategory    String
+  id                   String           @id @default(uuid())
+  retirementId         String           @unique
+  holdingId            String
+  projectId            String
+  tokenMint            String
+  retiredAmount        Int
+  retiredBy            String
+  walletAddress        String
+  reason               String
+  reasonCategory       String
   transactionSignature String
-  certificateCid    String?
-  certificateUrl    String?
-  status            RetirementStatus @default(PENDING)
-  organization      String?
-  projectName       String?
-  methodology       String?
-  vintage           Int?
-  metadata          Json?
-  timestamp         DateTime
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  holder            User             @relation(fields: [retiredBy], references: [id], onDelete: Cascade)
-  holding           Holding          @relation(fields: [holdingId], references: [id], onDelete: Cascade)
-  project           Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  certificateCid       String?
+  certificateUrl       String?
+  status               RetirementStatus @default(PENDING)
+  organization         String?
+  projectName          String?
+  methodology          String?
+  vintage              Int?
+  metadata             Json?
+  timestamp            DateTime
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  holding              Holding          @relation(fields: [holdingId], references: [id], onDelete: Cascade)
+  project              Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  holder               User             @relation(fields: [retiredBy], references: [id], onDelete: Cascade)
 
   @@index([retiredBy])
   @@index([walletAddress])
@@ -179,33 +180,280 @@ model Retirement {
   @@index([createdAt])
 }
 
+/// A marketplace settlement (custody) keypair provisioned for a seller wallet
+/// under Design A (server-side settlement). The backend generated the keypair,
+/// encrypted the secret at rest (AES-256-GCM, master key from env) and only ever
+/// exposes the public side. The seller confirms the key with a wallet signature
+/// and deposits the listed credits into the key's Token-2022 ATA; purchases then
+/// settle server-side with `transferCredit` signed by this keypair — the buyer's
+/// wallet is never asked to sign a seller transfer.
+model SellerMarketplaceKey {
+  id              String          @id @default(uuid())
+  sellerUserId    String
+  walletAddress   String
+  publicKey       String
+  encryptedSecret String
+  status          SellerKeyStatus @default(ACTIVE)
+  confirmedAt     DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  seller          User            @relation(fields: [sellerUserId], references: [id], onDelete: Cascade)
+
+  @@unique([sellerUserId, walletAddress, status])
+  @@index([sellerUserId])
+  @@index([walletAddress])
+  @@index([status])
+}
+
+enum SellerKeyStatus {
+  ACTIVE
+  REVOKED
+}
+
 model Listing {
-  id            String        @id @default(uuid())
-  creditId      String
-  seller        String
-  buyer         String?
-  price         Float
-  amount        Int           @default(1)
-  status        ListingStatus @default(ACTIVE)
-  sellerUserId  String?
-  projectId     String?
-  projectName   String?
-  projectType   ProjectType?
-  methodology   String?
-  vintage       Int?
+  id             String        @id @default(uuid())
+  creditId       String
+  seller         String
+  buyer          String?
+  price          Float
+  amount         Int           @default(1)
+  status         ListingStatus @default(ACTIVE)
+  sellerUserId   String?
+  projectId      String?
+  projectName    String?
+  projectType    ProjectType?
+  methodology    String?
+  vintage        Int?
   verifiedTonnes Float?
-  reportCid     String?
-  metadata      Json?
-  txSignature   String?
-  settledAt     DateTime?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  reportCid      String?
+  metadata       Json?
+  txSignature    String?
+  settledAt      DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   @@index([status])
   @@index([seller])
   @@index([creditId])
   @@index([sellerUserId])
   @@index([createdAt])
+}
+
+/// A decoded on-chain event emitted by the VerdiCred Anchor program. Every
+/// event (mint / transfer / retire / authority change) is written exactly once
+/// and keyed by its transaction signature + event index so the indexer is
+/// idempotent and can be safely re-run after downtime. `eventType` mirrors the
+/// program's `#[event]` names; `payload` keeps the full decoded struct.
+model IndexedEvent {
+  id         String   @id @default(uuid())
+  /// One of: CREDIT_MINTED | CREDIT_TRANSFERRED | CREDIT_RETIRED | ORACLE_AUTHORITY_CHANGED
+  eventType  String
+  /// Solana transaction signature the event was found in (base58).
+  signature  String
+  /// The index of this event within the transaction (0-based).
+  eventIndex Int      @default(0)
+  /// Slot the transaction was confirmed in.
+  slot       BigInt
+  /// Block time (unix seconds) of the transaction.
+  blockTime  BigInt?
+  /// The program that emitted the event (VerdiCred program id).
+  programId  String
+  /// The on-chain mint (token) this event concerns, if any.
+  mint       String?
+  /// The originating project id (from CreditMinted), if any.
+  projectId  String?
+  /// Free-text account keys present in the event (from/to/owner/recipient/batch).
+  accounts   Json?
+  /// The fully decoded event payload (structured, JSON-serializable).
+  payload    Json
+  /// When the indexer first persisted this event.
+  createdAt  DateTime @default(now())
+
+  @@unique([signature, eventIndex])
+  @@index([eventType])
+  @@index([mint])
+  @@index([projectId])
+  @@index([slot])
+  @@index([createdAt])
+}
+
+/// Ownership transfer history derived from decoded CREDIT_TRANSFERRED events.
+/// Each row is one on-chain transfer (from → to) of `amount` credits for a
+/// mint. Used by the explorer's ownership timeline and current-owner rollup.
+model OwnershipTransfer {
+  id         String   @id @default(uuid())
+  mint       String
+  /// Sender wallet (base58). Empty string for the initial issuer (mint).
+  fromWallet String
+  /// Recipient wallet (base58).
+  toWallet   String
+  amount     Int
+  signature  String
+  slot       BigInt
+  blockTime  BigInt?
+  /// Sequence number within the mint's transfer stream (0 = first transfer).
+  seq        Int
+  createdAt  DateTime @default(now())
+
+  @@unique([signature, seq])
+  @@index([mint])
+  @@index([toWallet])
+  @@index([fromWallet])
+  @@index([slot])
+  @@index([createdAt])
+}
+
+/// On-chain transaction history: one row per VerdiCred-related transaction the
+/// indexer has seen, with lightweight parsed metadata. `kind` is derived from
+/// the instructions in the transaction (MINT / TRANSFER / RETIRE / AUTHORITY).
+model ExplorerTransaction {
+  id               String   @id @default(uuid())
+  signature        String   @unique
+  mint             String?
+  kind             String
+  /// Human-readable summary, e.g. "Mint 1250 credits for project proj-abc".
+  summary          String?
+  /// Fee payer / initiator wallet.
+  signer           String?
+  slot             BigInt
+  blockTime        BigInt?
+  /// Number of instructions in the transaction.
+  instructionCount Int      @default(0)
+  /// Raw program log count / success flag for audit.
+  success          Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  @@index([mint])
+  @@index([kind])
+  @@index([signer])
+  @@index([slot])
+  @@index([createdAt])
+}
+
+/// Denormalized, query-optimized snapshot of a credit's full public lifecycle,
+/// used by the public explorer so reads never have to join the whole schema or
+/// hit the chain. Refreshed by the indexer after each relevant event and on
+/// demand via the `refresh` endpoint. `creditId` == the on-chain token mint.
+model CreditSnapshot {
+  creditId          String    @id
+  projectId         String?
+  projectName       String?
+  projectType       String?
+  methodology       String?
+  vintage           Int?
+  /// Total credits minted across all batches for this mint.
+  totalMinted       Int       @default(0)
+  /// Total credits ever retired (burned) for this mint.
+  totalRetired      Int       @default(0)
+  /// totalMinted - totalRetired.
+  circulatingSupply Int       @default(0)
+  /// Current owner wallet (latest transfer recipient), or the issuer.
+  currentOwner      String?
+  /// Most recent on-chain report status for the active batch.
+  reportStatus      String?
+  reportCid         String?
+  evidenceCids      String[]  @default([])
+  /// Number of ownership transfers (excludes the mint itself).
+  transferCount     Int       @default(0)
+  /// True when the entire supply has been retired.
+  fullyRetired      Boolean   @default(false)
+  /// Latest on-chain signature touching this credit.
+  lastSignature     String?
+  lastSlot          BigInt?
+  lastEventAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([projectId])
+  @@index([currentOwner])
+  @@index([vintage])
+  @@index([reportStatus])
+  @@index([fullyRetired])
+  @@index([updatedAt])
+}
+
+/// Denormalized, query-optimized snapshot of a project's public lifecycle for
+/// the explorer. Mirrors the `Project` row but is maintained by the indexer /
+/// explorer service so public reads are stable and chain-derived fields
+/// (minted/retired supply, credit ids) are present even when the underlying
+/// project row changes.
+model ProjectSnapshot {
+  projectId            String    @id
+  ownerId              String?
+  projectName          String?
+  projectType          String?
+  methodology          String?
+  expectedAnnualTonnes Float?
+  status               String?
+  /// Number of on-chain credit mints (batches) for this project.
+  creditIds            String[]  @default([])
+  totalMinted          Int       @default(0)
+  totalRetired         Int       @default(0)
+  circulatingSupply    Int       @default(0)
+  evidenceCount        Int       @default(0)
+  verificationCount    Int       @default(0)
+  retirementCount      Int       @default(0)
+  lastSignature        String?
+  lastSlot             BigInt?
+  lastEventAt          DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([updatedAt])
+}
+
+/// A retirement record mirrored from decoded CREDIT_RETIRED events. The
+/// off-chain `Retirement` table is the system of record for business logic;
+/// this table is the public, chain-derived view used by the explorer and is
+/// kept consistent by the indexer from on-chain events.
+model IndexedRetirement {
+  id               String   @id @default(uuid())
+  /// On-chain retirement record PDA (unique per retirement).
+  retirementRecord String   @unique
+  owner            String
+  mint             String
+  batch            String
+  amount           Int
+  reason           String?
+  reportRef        String?
+  signature        String
+  slot             BigInt
+  blockTime        BigInt?
+  totalRetired     Int
+  createdAt        DateTime @default(now())
+
+  @@index([owner])
+  @@index([mint])
+  @@index([batch])
+  @@index([slot])
+  @@index([createdAt])
+}
+
+/// Indexer bookkeeping: tracks the last slot/Signature scanned so polling can
+/// resume after downtime (catch-up backfill) and remain idempotent. A single
+/// row (id = 'singleton') is used; the signature cursor enables
+/// getSignaturesForAddress continuation.
+model IndexerCursor {
+  id             String    @id
+  /// Last slot successfully processed. New polling starts from slot+1.
+  lastSlot       BigInt    @default(0)
+  /// Last transaction signature processed (used for pagination cursor).
+  lastSignature  String?
+  /// Number of on-chain events indexed since the beginning.
+  eventsIndexed  BigInt    @default(0)
+  /// Number of transactions processed since the beginning.
+  txsProcessed   BigInt    @default(0)
+  /// ISO timestamp of the last successful poll.
+  lastPolledAt   DateTime  @default(now())
+  /// ISO timestamp of the last successful (re)initialization / backfill.
+  lastBackfillAt DateTime?
+  /// True while a backfill or catch-up pass is in progress (guards re-entrancy).
+  isBackfilling  Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 }
 
 enum Role {

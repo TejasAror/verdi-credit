@@ -200,4 +200,24 @@ export class CarbonCreditsService {
   async getRetirements(mint: string): Promise<RetirementView[]> {
     return this.solana.getRetirements(mint);
   }
+
+  /** Read the CreditBatch accounts belonging to a specific project for a mint. */
+  async getBatchesForProject(mint: string, projectId: string): Promise<CreditBatchView[]> {
+    return this.solana.getBatchesForProject(mint, projectId);
+  }
+
+  /** Read the RetirementRecords for a mint that reference a specific project's batches. */
+  async getRetirementsForProject(mint: string, projectId: string): Promise<RetirementView[]> {
+    return this.solana.getRetirementsForProject(mint, projectId);
+  }
+
+  /** The configured on-chain deployment (program id + credit mint) for the audit UI. */
+  getConfig() {
+    return {
+      programId: this.solanaConfig.programId.toBase58(),
+      cluster: this.solanaConfig.cluster,
+      creditMint: this.solanaConfig.creditMint?.toBase58() ?? null,
+      onChainEnabled: this.solanaConfig.onChainEnabled,
+    };
+  }
 }

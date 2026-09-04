@@ -228,7 +228,34 @@ export class RetirementService {
     dto: RetireCreditsDto,
     actor: RetirementActor,
   ): Promise<RetirementResponseDto> {
-    return this.prisma.$transaction(async (tx) => {
+    // The DB writes must commit quickly (within the 5s interactive-transaction
+    // limit). Certificate generation + IPFS pinning is slow (~6s+) and is
+    // performed AFTER the transaction commits so it can never expire the Prisma
+    // transaction ("Transaction already closed"). The post-commit certification
+    // update is idempotent and safe to re-run.
+    let row: {
+      id: string;
+      retirementId: string;
+      projectId: string;
+      tokenMint: string;
+      retiredAmount: number;
+      retiredBy: string;
+      walletAddress: string;
+      reason: string;
+      reasonCategory: string;
+      transactionSignature: string;
+      certificateCid: string | null;
+      certificateUrl: string | null;
+      status: RetirementStatus;
+      organization: string | null;
+      projectName: string | null;
+      methodology: string | null;
+      vintage: number | null;
+      metadata: Prisma.JsonValue | null;
+      timestamp: Date;
+      createdAt: Date;
+      updatedAt: Date;
+    } = await this.prisma.$transaction(async (tx) => {
       // 1. Load + lock the holding row for update to avoid races.
       const holding = await tx.holding.findUnique({
         where: { id: dto.holdingId },
@@ -330,43 +357,46 @@ export class RetirementService {
           `by user ${actor.id} (tx=${settlement.txSignature}).`,
       );
 
-      // 10. Generate + pin the certificate (outside the DB tx is fine, but we
-      //     keep it within the same logical flow). We re-read the row via tx
-      //     is unnecessary; build from `row`.
-      try {
-        const certData = this.toCertificateData(row, actor);
-        const cert = await this.certificate.generateAndPin(certData);
-        const certified = await tx.retirement.update({
-          where: { id: row.id },
-          data: {
-            certificateCid: cert.cid,
-            certificateUrl: cert.url,
-            status: RetirementStatus.CERTIFIED,
-            metadata: {
-              ...(row.metadata as object),
-              certificateUrl: cert.url,
-            } as Prisma.InputJsonValue,
-          },
-        });
-        // Audit the certification.
-        await this.audit.recordAction({
-          actorId: actor.id,
-          targetId: actor.id,
-          action: AuditLogAction.RETIREMENT_CERTIFIED,
-          reason: `Certificate ${cert.certificateId} pinned (cid=${cert.cid}).`,
-        });
-        return this.toDto(certified);
-      } catch (certErr) {
-        // The retirement is already recorded + balance updated. A certificate
-        // failure must not roll back the retirement — surface it but keep the
-        // record so it can be re-generated (status stays CONFIRMED).
-        this.logger.error(
-          `Certificate generation failed for retirement ${retirementId}: ` +
-            `${(certErr as Error).message}`,
-        );
-        return this.toDto(row);
-      }
+      return row;
     });
+
+    // 10. Slow certificate generation + IPFS pinning runs AFTER the DB
+    //     transaction has committed, so it can never expire the transaction.
+    //     Failure here must NOT roll back the successful retirement: the record
+    //     stays CONFIRMED (certificate can be re-generated later).
+    try {
+      const certData = this.toCertificateData(row, actor);
+      const cert = await this.certificate.generateAndPin(certData);
+      const certified = await this.prisma.retirement.update({
+        where: { id: row.id },
+        data: {
+          certificateCid: cert.cid,
+          certificateUrl: cert.url,
+          status: RetirementStatus.CERTIFIED,
+          metadata: {
+            ...(row.metadata as object),
+            certificateUrl: cert.url,
+          } as Prisma.InputJsonValue,
+        },
+      });
+      // Audit the certification (outside the DB transaction).
+      await this.audit.recordAction({
+        actorId: actor.id,
+        targetId: actor.id,
+        action: AuditLogAction.RETIREMENT_CERTIFIED,
+        reason: `Certificate ${cert.certificateId} pinned (cid=${cert.cid}).`,
+      });
+      return this.toDto(certified);
+    } catch (certErr) {
+      // The retirement is already recorded + balance updated. A certificate
+      // failure must not roll back the retirement — surface it but keep the
+      // record so it can be re-generated (status stays CONFIRMED).
+      this.logger.error(
+        `Certificate generation failed for retirement ${row.retirementId}: ` +
+          `${(certErr as Error).message}`,
+      );
+      return this.toDto(row);
+    }
   }
 
   // ---------------------------------------------------------------------------

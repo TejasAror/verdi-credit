@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  Delete,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -17,17 +18,26 @@ import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Actor, MarketplaceService } from './marketplace.service';
+import { SellerKeyService, SellerKeyResponse } from './seller-key.service';
 import {
   BuyListingDto,
   CancelListingDto,
+  ConfirmSellerKeyDto,
   CreateListingDto,
+  DepositCheckDto,
+  DepositConfirmDto,
   ListingResponseDto,
+  ProvisionSellerKeyDto,
+  SellerKeyResponseDto,
 } from './dto/marketplace.dto';
 
 @ApiTags('Marketplace (Stage 5)')
 @Controller('marketplace')
 export class MarketplaceController {
-  constructor(private readonly marketplace: MarketplaceService) {}
+  constructor(
+    private readonly marketplace: MarketplaceService,
+    private readonly sellerKeys: SellerKeyService,
+  ) {}
 
   @Get('listings')
   @ApiBearerAuth('supabase-jwt')
@@ -146,5 +156,126 @@ export class MarketplaceController {
   ): Promise<ListingResponseDto> {
     if (!actor?.id) throw new ForbiddenException('Authentication required.');
     return this.marketplace.cancel(id, dto, actor);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Seller settlement keys (Design A server-side settlement)
+  // ---------------------------------------------------------------------------
+
+  @Post('seller-keys')
+  @ApiBearerAuth('supabase-jwt')
+  @ApiOperation({
+    summary: 'Provision a server-side settlement (custody) key for the seller wallet',
+    description:
+      'Generates a fresh ed25519 keypair, encrypts its secret at rest (AES-256-GCM ' +
+      'under a server-only master key), creates its Token-2022 ATA (server-funded) and ' +
+      'stores exactly one ACTIVE key per (user, wallet). Only the PUBLIC key and ATA are ' +
+      'returned — the secret never leaves the backend. The seller must then confirm the ' +
+      'key by signing a challenge with their linked wallet and deposit the listed credits ' +
+      'into the custody ATA before purchases settle server-side.',
+  })
+  @ApiResponse({ status: 201, type: SellerKeyResponseDto })
+  @ApiResponse({ status: 403, description: 'Wallet is not linked to the user.' })
+  provisionKey(
+    @Body() dto: ProvisionSellerKeyDto,
+    @CurrentUser() actor: Actor,
+  ): Promise<SellerKeyResponse> {
+    if (!actor?.id) throw new ForbiddenException('Authentication required.');
+    return this.sellerKeys.provision(actor.id, dto.walletAddress);
+  }
+
+  @Post('seller-keys/:id/confirm')
+  @ApiBearerAuth('supabase-jwt')
+  @ApiOperation({
+    summary: 'Confirm a settlement key with the seller wallet signature',
+    description:
+      'Verifies the seller\'s ed25519 signature over the challenge message (signed by ' +
+      'the linked main wallet) and marks the key confirmed. Only confirmed keys can ' +
+      'settle purchases.',
+  })
+  @ApiParam({ name: 'id', description: 'Settlement key id (uuid)' })
+  @ApiResponse({ status: 200, type: SellerKeyResponseDto })
+  confirmKey(
+    @Param('id') id: string,
+    @Body() dto: ConfirmSellerKeyDto,
+    @CurrentUser() actor: Actor,
+  ): Promise<SellerKeyResponse> {
+    if (!actor?.id) throw new ForbiddenException('Authentication required.');
+    return this.sellerKeys.confirm(actor.id, id, dto.signature, dto.message);
+  }
+
+  @Get('seller-keys')
+  @ApiBearerAuth('supabase-jwt')
+  @ApiOperation({
+    summary: 'List the caller\'s settlement keys',
+    description: 'Returns only public fields (publicKey, ATA, status, confirmed).',
+  })
+  @ApiResponse({ status: 200, type: SellerKeyResponseDto, isArray: true })
+  listKeys(@CurrentUser() actor: Actor): Promise<SellerKeyResponse[]> {
+    if (!actor?.id) throw new ForbiddenException('Authentication required.');
+    return this.sellerKeys.listForUser(actor.id);
+  }
+
+  @Delete('seller-keys/:id')
+  @ApiBearerAuth('supabase-jwt')
+  @ApiOperation({
+    summary: 'Revoke a settlement key',
+    description:
+      'Sets status=REVOKED so it can no longer settle purchases. Deposited credits ' +
+      'are NOT moved; the seller should withdraw them via the documented manual flow.',
+  })
+  @ApiResponse({ status: 200, type: SellerKeyResponseDto })
+  revokeKey(
+    @Param('id') id: string,
+    @CurrentUser() actor: Actor,
+  ): Promise<SellerKeyResponse> {
+    if (!actor?.id) throw new ForbiddenException('Authentication required.');
+    return this.sellerKeys.revoke(actor.id, id);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Seller deposit (fund the custody ATA)
+  // ---------------------------------------------------------------------------
+
+  @Post('listings/:id/deposit-prepare')
+  @ApiBearerAuth('supabase-jwt')
+  @ApiOperation({
+    summary: 'Prepare a seller-signed deposit transfer into the custody ATA',
+    description:
+      'Only the listing seller (or an ADMIN) may call this. Builds a ready-to-sign ' +
+      '`transferCredit` transaction from the seller\'s main wallet to the custody ATA. ' +
+      'The seller signs it once with Phantom, submits, then confirms via ' +
+      'POST /marketplace/listings/:id/deposit-confirm.',
+  })
+  @ApiParam({ name: 'id', description: 'Listing id (uuid)' })
+  @ApiResponse({ status: 201, description: 'Ready-to-sign deposit transaction.' })
+  @ApiResponse({ status: 403, description: 'Not the listing owner.' })
+  depositPrepare(
+    @Param('id') id: string,
+    @CurrentUser() actor: Actor,
+  ): Promise<{ transaction: string; seller: string; listingId: string; amount: number; custodyPublicKey: string; custodyAta: string }> {
+    if (!actor?.id) throw new ForbiddenException('Authentication required.');
+    return this.marketplace.prepareDeposit(id, actor);
+  }
+
+  @Post('listings/:id/deposit-confirm')
+  @ApiBearerAuth('supabase-jwt')
+  @ApiOperation({
+    summary: 'Verify the seller\'s deposit reached the custody ATA',
+    description:
+      'Only the listing seller (or an ADMIN) may call this. Re-checks the on-chain ' +
+      'balance of the custody ATA against the listing amount and returns the funding ' +
+      'state. No chain write is performed.',
+  })
+  @ApiParam({ name: 'id', description: 'Listing id (uuid)' })
+  @ApiResponse({ status: 201, type: DepositCheckDto })
+  @ApiResponse({ status: 403, description: 'Not the listing owner.' })
+  depositConfirm(
+    @Param('id') id: string,
+    @Body() dto: DepositConfirmDto,
+    @CurrentUser() actor: Actor,
+  ): Promise<DepositCheckDto> {
+    if (!actor?.id) throw new ForbiddenException('Authentication required.');
+    return this.marketplace.confirmDeposit(id, actor, dto.txSignature);
   }
 }

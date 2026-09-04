@@ -23,7 +23,12 @@ export interface CertificateData {
   retiredBy: string;
   retiredByEmail?: string | null;
   transactionSignature: string;
-  /** IPFS CID of the certificate itself (embedded for self-verification). */
+  /**
+   * IPFS CID of the certificate, when already known. A CID is the hash of the
+   * certificate bytes, so it CANNOT be embedded inside the certificate itself
+   * — this value is only used to enrich the verification URL (rid + cid) when
+   * building a certificate AFTER the pin exists (e.g. regenerated downloads).
+   */
   certificateCid?: string | null;
   timestamp: string;
 }
@@ -48,9 +53,12 @@ export interface CertificateResult {
  *   - a QR code that resolves to the public verification URL for the retirement
  *
  * Only the returned IPFS CID is persisted by the caller (the PDF itself lives
- * off-chain on IPFS). The QR code encodes a verification URL containing the
- * retirement id + certificate CID so the certificate can be independently
- * verified by scanning it.
+ * off-chain on IPFS). The QR code encodes a public verification URL containing
+ * the retirement id (+ the certificate CID when it is already known) so the
+ * certificate can be independently verified by scanning it. Because the first
+ * rendering happens BEFORE the file is pinned, the CID is never embedded inside
+ * the certificate — the immutable retirement id is the canonical verification
+ * handle.
  */
 @Injectable()
 export class CertificateGeneratorService {
@@ -216,7 +224,6 @@ export class CertificateGeneratorService {
     doc.moveDown(0.2);
     const meta: [string, string][] = [
       ['Retirement ID', data.retirementId],
-      ['Certificate CID', data.certificateCid || 'pending'],
       ['Verification URL', this.buildVerifyUrl(data.retirementId, data.certificateCid)],
     ];
     meta.forEach(([label, value]) => {

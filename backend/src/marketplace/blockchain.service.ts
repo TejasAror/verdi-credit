@@ -192,6 +192,15 @@ export class BlockchainService {
     return this.solanaConfig.explorerTx(txSignature);
   }
 
+  /**
+   * Ensure the buyer's Token-2022 ATA exists before a server-settled transfer
+   * so `transferCredit` can land in it. Creates the ATA server-funded only when
+   * missing (no-op for existing accounts).
+   */
+  async ensureTokenAccount(creditId: string, owner: string): Promise<string> {
+    return this.solana.ensureTokenAccount(creditId, owner);
+  }
+
   private static parseSecret(secret: string): Keypair {
     const trimmed = secret.trim();
     if (trimmed.startsWith('[')) {

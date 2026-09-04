@@ -37,6 +37,8 @@ pub struct CreditBatch {
     pub authority: Pubkey,
     #[max_len(MAX_STR_LEN)]
     pub project_id: String,
+    /// SHA-256 hash of project_id, truncated to 32 bytes for PDA seed compatibility.
+    pub project_id_hash: [u8; 32],
     pub vintage: u16,
     #[max_len(MAX_METHODOLOGY_LEN)]
     pub methodology: String,

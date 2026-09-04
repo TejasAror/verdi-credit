@@ -17,6 +17,7 @@ import { CarbonCreditProgram } from "../target/types/carbon_credit_program";
 import { expect } from "chai";
 import * as fs from "fs";
 import * as path from "path";
+import { createHash } from "crypto";
 
 describe("carbon-credit-program", () => {
   // Local validator cluster started by `anchor test`.
@@ -63,13 +64,17 @@ describe("carbon-credit-program", () => {
     Rejected: { rejected: {} },
   } as const;
 
+  // SHA-256 of the projectId — the deployed program derives the CreditBatch PDA
+  // from this 32-byte hash (NOT the raw projectId string).
+  const projectIdHash = createHash("sha256").update(projectId).digest();
+
   const creditBatchPda = (mint: PublicKey) =>
     PublicKey.findProgramAddressSync(
       [
         PROGRAM_SEED,
         CREDIT_BATCH_SEED,
         mint.toBuffer(),
-        Buffer.from(projectId),
+        projectIdHash,
         new anchor.BN(vintage).toArrayLike(Buffer, "le", 2),
       ],
       program.programId,
@@ -200,6 +205,7 @@ describe("carbon-credit-program", () => {
       const tx = await program.methods
         .mintCredit({
           projectId,
+          projectIdHash: Array.from(projectIdHash),
           vintage,
           methodology,
           evidenceCids,
@@ -275,6 +281,7 @@ describe("carbon-credit-program", () => {
         await program.methods
           .mintCredit({
             projectId,
+            projectIdHash: Array.from(projectIdHash),
             vintage,
             methodology,
             evidenceCids,
@@ -315,6 +322,7 @@ describe("carbon-credit-program", () => {
         await program.methods
           .mintCredit({
             projectId,
+            projectIdHash: Array.from(projectIdHash),
             vintage,
             methodology,
             evidenceCids,
@@ -355,6 +363,7 @@ describe("carbon-credit-program", () => {
         await program.methods
           .mintCredit({
             projectId,
+            projectIdHash: Array.from(projectIdHash),
             vintage,
             methodology,
             evidenceCids,
@@ -593,6 +602,7 @@ describe("carbon-credit-program", () => {
         await program.methods
           .mintCredit({
             projectId,
+            projectIdHash: Array.from(projectIdHash),
             vintage,
             methodology,
             evidenceCids,

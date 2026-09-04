@@ -5,13 +5,15 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Listing, ListingStatus, Prisma, Role } from '@prisma/client';
+import { Listing, ListingStatus, Prisma, Role, SellerKeyStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { BlockchainService } from './blockchain.service';
+import { SellerKeyService } from './seller-key.service';
 import {
   BuyListingDto,
   CancelListingDto,
   CreateListingDto,
+  DepositCheckDto,
   ListingResponseDto,
 } from './dto/marketplace.dto';
 
@@ -43,6 +45,7 @@ export class MarketplaceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly blockchain: BlockchainService,
+    private readonly sellerKeys: SellerKeyService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -72,7 +75,7 @@ export class MarketplaceService {
     if (!row) {
       throw new NotFoundException(`Listing "${id}" not found.`);
     }
-    return this.toDto(row);
+    return this.enrichWithSellerKey(row, this.toDto(row));
   }
 
   // ---------------------------------------------------------------------------
@@ -174,8 +177,12 @@ export class MarketplaceService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Purchase a listing. Transfers ownership to the buyer and settles the
-   * transfer via BlockchainService. Idempotency: only ACTIVE listings buyable.
+   * Purchase a listing. Settles server-side via the seller's custody key (Design A):
+   * the buyer's wallet is NEVER asked to sign the seller's `transferCredit` transaction.
+   * The backend resolves the seller's confirmed settlement key, verifies the custody ATA
+   * holds the listed amount, ensures the buyer's Token-2022 ATA exists, then signs +
+   * submits the transfer with the custody keypair. Legacy callers may still submit the
+   * signature of an already-submitted client-signed transfer via `txSignature`.
    */
   async buy(id: string, dto: BuyListingDto, actor: Actor): Promise<ListingResponseDto> {
     const listing = await this.prisma.listing.findUnique({ where: { id } });
@@ -191,6 +198,50 @@ export class MarketplaceService {
       throw new BadRequestException('You cannot buy your own listing.');
     }
 
+    if (!dto.txSignature) {
+      // Server-settlement path: resolve the seller's custody key and settle with it.
+      const custody = await this.sellerKeys.resolveActiveSecret(listing.seller, listing.sellerUserId);
+      const custodyOk = await this.blockchain.verifyOwnership({
+        creditId: listing.creditId,
+        wallet: custody.publicKey,
+        amount: listing.amount,
+      });
+      if (!custodyOk) {
+        throw new BadRequestException(
+          `The seller's settlement wallet is not funded for this listing. ` +
+            'The seller must deposit the listed credits into their custody ATA before the purchase can complete.',
+        );
+      }
+      // Guarantee the buyer's Token-2022 ATA exists so `transferCredit` can settle.
+      await this.blockchain.ensureTokenAccount(listing.creditId, dto.buyer);
+
+      const settlement = await this.blockchain.settlePurchase({
+        creditId: listing.creditId,
+        seller: custody.publicKey,
+        buyer: dto.buyer,
+        amount: listing.amount,
+        price: listing.price,
+        sellerSecret: custody.secret,
+      });
+
+      const row = await this.prisma.listing.update({
+        where: { id },
+        data: {
+          status: ListingStatus.SOLD,
+          buyer: dto.buyer,
+          txSignature: settlement.txSignature,
+          settledAt: new Date(settlement.settledAt),
+        },
+      });
+      await this.upsertBuyerHolding(listing, dto.buyer);
+      this.logger.log(
+        `Listing ${id} SOLD (server-settled) to ${dto.buyer} by user ${actor.id} via custody ${custody.publicKey} (tx ${settlement.txSignature}).`,
+      );
+      return this.toDto(row);
+    }
+
+    // Legacy client-signed settlement: the transfer was already submitted by the
+    // seller wallet; record the provided signature as the settlement proof.
     const settlement = await this.blockchain.settlePurchase({
       creditId: listing.creditId,
       seller: listing.seller,
@@ -220,6 +271,58 @@ export class MarketplaceService {
       `Listing ${id} SOLD to ${dto.buyer} by user ${actor.id} (tx ${settlement.txSignature}).`,
     );
     return this.toDto(row);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Deposit (fund the custody ATA)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Build a ready-to-sign `transferCredit` deposit transaction moving the listed
+   * credits from the seller's main wallet into their custody ATA. The seller
+   * signs once with Phantom and confirms via {@link confirmDeposit}.
+   */
+  async prepareDeposit(
+    id: string,
+    actor: Actor,
+  ): Promise<{ transaction: string; seller: string; listingId: string; amount: number; custodyPublicKey: string; custodyAta: string }> {
+    const listing = await this.prisma.listing.findUnique({ where: { id } });
+    if (!listing) throw new NotFoundException(`Listing "${id}" not found.`);
+    this.assertSellerAuthorized(listing, actor);
+
+    const custody = await this.sellerKeys.resolveActiveSecret(listing.seller, listing.sellerUserId);
+    const prepared = await this.blockchain.buildTransferTx({
+      creditId: listing.creditId,
+      seller: listing.seller,
+      buyer: custody.publicKey,
+      amount: listing.amount,
+    });
+    return {
+      transaction: prepared.transaction,
+      seller: prepared.seller,
+      listingId: listing.id,
+      amount: listing.amount,
+      custodyPublicKey: custody.publicKey,
+      custodyAta: this.sellerKeys.ataForPublicKey(custody.publicKey),
+    };
+  }
+
+  /**
+   * Verify that a deposit landed: re-read the on-chain custody ATA balance and
+   * compare it to the listing amount. No chain write is performed.
+   */
+  async confirmDeposit(id: string, actor: Actor, _txSignature: string): Promise<DepositCheckDto> {
+    const listing = await this.prisma.listing.findUnique({ where: { id } });
+    if (!listing) throw new NotFoundException(`Listing "${id}" not found.`);
+    this.assertSellerAuthorized(listing, actor);
+
+    const custody = await this.sellerKeys.resolveActiveSecret(listing.seller, listing.sellerUserId);
+    const custodyBalance = await this.sellerKeys.getCustodyBalance(custody.publicKey);
+    const funded = custodyBalance >= listing.amount;
+    this.logger.log(
+      `Deposit check for listing ${id}: custody ${custody.publicKey} balance=${custodyBalance} required=${listing.amount} -> ${funded ? 'FUNDED' : 'NOT FUNDED'}.`,
+    );
+    return { funded, custodyBalance, amount: listing.amount };
   }
 
   // ---------------------------------------------------------------------------
@@ -274,6 +377,33 @@ export class MarketplaceService {
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  /** The listing owner's VerdiCred user (or an ADMIN) may manage its custody. */
+  private assertSellerAuthorized(listing: Listing, actor: Actor): void {
+    const isOwnerUser =
+      listing.sellerUserId === actor.id || actor.role === Role.ADMIN;
+    if (!isOwnerUser) {
+      throw new ForbiddenException('Only the listing owner may manage its settlement wallet.');
+    }
+  }
+
+  /** Attach the seller's custody-key overview + funding state to a listing DTO. */
+  private async enrichWithSellerKey(row: Listing, dto: ListingResponseDto): Promise<ListingResponseDto> {
+    const key = await this.prisma.sellerMarketplaceKey.findFirst({
+      where: { walletAddress: row.seller, status: SellerKeyStatus.ACTIVE },
+    });
+    if (!key) return dto;
+    dto.custodyPublicKey = key.publicKey;
+    dto.custodyAta = this.sellerKeys.ataForPublicKey(key.publicKey);
+    dto.sellerKeyReady = key.confirmedAt !== null;
+    if (key.confirmedAt) {
+      const balance = await this.sellerKeys.getCustodyBalance(key.publicKey);
+      dto.custodyFunded = balance >= row.amount;
+    } else {
+      dto.custodyFunded = false;
+    }
+    return dto;
+  }
 
   private toDto(row: Listing): ListingResponseDto {
     return {

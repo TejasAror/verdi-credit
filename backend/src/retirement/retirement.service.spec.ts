@@ -37,6 +37,9 @@ function makePrisma(holding: any, createdRow: any, updatedHolding: any) {
       findUnique: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
+      // Certification finalization runs AFTER the $transaction commits, so it
+      // uses the top-level client rather than the transactional client.
+      update: jest.fn().mockResolvedValue({ ...createdRow, certificateCid: 'cid123', status: RetirementStatus.CERTIFIED }),
     },
   };
   return { prisma, tx };

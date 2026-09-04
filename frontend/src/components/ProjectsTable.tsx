@@ -1,13 +1,15 @@
 'use client';
 
+import Link from 'next/link';
 import { Project, ProjectStatus } from '@/lib/types';
+import { DataTable, TableRow, Td, Th, StatusBadge } from '@/components/parts';
+import { formatDate, short } from '@/lib/format';
+import { FolderOpen, ArrowUpRight } from 'lucide-react';
 
-const STATUS_STYLES: Record<ProjectStatus, string> = {
-  DRAFT: 'bg-slate-100 text-slate-700',
-  PENDING_VERIFICATION: 'bg-amber-100 text-amber-800',
-  VERIFIED: 'bg-green-100 text-green-800',
-  REJECTED: 'bg-red-100 text-red-800',
-  RETIRED: 'bg-slate-200 text-slate-500',
+const TYPE_TONE: Record<Project['projectType'], string> = {
+  REFORESTATION: 'text-accent-emerald',
+  SOIL_CARBON: 'text-accent-amber',
+  RENEWABLE_ENERGY: 'text-accent-cyan',
 };
 
 export default function ProjectsTable({
@@ -19,7 +21,7 @@ export default function ProjectsTable({
 }) {
   if (loading) {
     return (
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
+      <div className="glass animate-pulse rounded-3xl p-6 text-sm text-content-faint">
         Loading projects…
       </div>
     );
@@ -27,54 +29,40 @@ export default function ProjectsTable({
 
   if (projects.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500 shadow-sm">
-        No projects registered yet. Create your first project to get started.
+      <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/[0.02] px-6 py-14 text-center">
+        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-content-faint">
+          <FolderOpen className="h-6 w-6" />
+        </div>
+        <p className="text-base font-semibold text-content">No projects yet</p>
+        <p className="mt-1 text-sm text-content-muted">Create your first project to get started.</p>
       </div>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm">
-          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className="px-4 py-3 font-medium">Project</th>
-              <th className="px-4 py-3 font-medium">Type</th>
-              <th className="px-4 py-3 font-medium">Methodology</th>
-              <th className="px-4 py-3 font-medium">Expected (t/yr)</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Created</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {projects.map((p) => (
-              <tr key={p.id} className="hover:bg-slate-50">
-                <td className="px-4 py-3 font-medium text-slate-900">
-                  {p.projectName}
-                </td>
-                <td className="px-4 py-3 text-slate-600">{p.projectType}</td>
-                <td className="px-4 py-3 text-slate-600">{p.methodology}</td>
-                <td className="px-4 py-3 text-slate-600">
-                  {p.expectedAnnualTonnes.toLocaleString()}
-                </td>
-                <td className="px-4 py-3">
-                  <span
-                    className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                      STATUS_STYLES[p.status] ?? 'bg-slate-100 text-slate-700'
-                    }`}
-                  >
-                    {p.status}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-slate-500">
-                  {new Date(p.createdAt).toLocaleDateString()}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <DataTable
+      head={['Project', 'Type', 'Methodology', 'Expected (t/yr)', 'Status', 'Created']}
+    >
+      {projects.map((p) => (
+        <TableRow key={p.id}>
+          <Td className="font-semibold text-content">
+            <Link
+              href={`/projects/${p.id}`}
+              className="group/row inline-flex items-center gap-1.5 text-content transition-colors hover:text-gradient"
+            >
+              {p.projectName}
+              <ArrowUpRight className="h-3.5 w-3.5 text-content-faint opacity-0 transition-all group-hover/row:opacity-100 group-hover/row:translate-x-0.5 group-hover/row:-translate-y-0.5" />
+            </Link>
+          </Td>
+          <Td className={TYPE_TONE[p.projectType]}>{p.projectType}</Td>
+          <Td>{p.methodology}</Td>
+          <Td className="tabular-nums">{p.expectedAnnualTonnes.toLocaleString()}</Td>
+          <Td>
+            <StatusBadge status={p.status as ProjectStatus} />
+          </Td>
+          <Td className="text-content-faint">{formatDate(p.createdAt)}</Td>
+        </TableRow>
+      ))}
+    </DataTable>
   );
 }

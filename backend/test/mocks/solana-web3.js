@@ -8,6 +8,11 @@ class PublicKey {
   static findProgramAddressSync() { return [new PublicKey('stub'), 0]; }
 }
 class Keypair {
+  constructor() {
+    // Synthetic 64-byte secret so SellerKeyService provisioning can snapshot it
+    // into the encrypted vault (tests never need real ed25519 parity here).
+    this.secretKey = new Uint8Array(64).fill(7);
+  }
   static generate() { return new Keypair(); }
   static fromSecretKey() { return new Keypair(); }
   get publicKey() { return new PublicKey('stub'); }

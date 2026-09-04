@@ -28,4 +28,18 @@ export class AuthService {
   async getProfile(claim: SupabaseUserClaim) {
     return this.usersService.findBySupabaseId(claim.supabaseId);
   }
+
+  /**
+   * Links a Phantom wallet to the authenticated user by verifying a signed message.
+   */
+  async linkWallet(
+    supabaseId: string,
+    dto: { walletAddress: string; signature: string; message: string },
+  ) {
+    const user = await this.usersService.findBySupabaseId(supabaseId);
+    if (!user) {
+      throw new Error('User profile not found. Call /auth/profile first.');
+    }
+    return this.usersService.linkWallet(user.id, dto.walletAddress, dto.signature, dto.message);
+  }
 }

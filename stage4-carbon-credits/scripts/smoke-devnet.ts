@@ -31,6 +31,7 @@ import {
 } from "@solana/spl-token";
 import * as fs from "fs";
 import * as path from "path";
+import { createHash } from "crypto";
 import {
   DEVNET_RPC,
   VERIFIER_ORACLE_AUTHORITY,
@@ -112,6 +113,10 @@ async function main() {
   const reportCid = "bafyreich4smokedevnetreportcid000000000000000000000000000000000000";
   const evidenceCids = ["bafybeismoke1", "bafybeismoke2"];
 
+  // SHA-256 of the projectId — the deployed program derives the CreditBatch PDA
+  // from this 32-byte hash (NOT the raw projectId string).
+  const projectIdHash = createHash("sha256").update(projectId).digest();
+
   // --- 1) Reject a PENDING report (proves the gate on live devnet) ---
   const recipient = Keypair.generate();
   const ata = await getAssociatedTokenAddress(
@@ -125,7 +130,7 @@ async function main() {
       PROGRAM_SEED,
       CREDIT_BATCH_SEED,
       creditMint.toBuffer(),
-      Buffer.from(projectId),
+      projectIdHash,
       new anchor.BN(vintage).toArrayLike(Buffer, "le", 2),
     ],
     programId,
@@ -137,6 +142,7 @@ async function main() {
       await program.methods
         .mintCredit({
           projectId,
+          projectIdHash: Array.from(projectIdHash),
           vintage,
           methodology,
           evidenceCids,
@@ -171,6 +177,7 @@ async function main() {
     await program.methods
       .mintCredit({
         projectId,
+        projectIdHash: Array.from(projectIdHash),
         vintage,
         methodology,
         evidenceCids,

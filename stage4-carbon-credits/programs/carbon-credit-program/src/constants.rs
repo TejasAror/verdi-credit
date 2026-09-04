@@ -16,9 +16,12 @@ pub const CREDIT_DECIMALS: u8 = 0;
 pub const DEFAULT_VINTAGE: u16 = 2026;
 
 // Sizing limits (kept conservative to stay well under account size caps).
-pub const MAX_STR_LEN: usize = 64; // projectId
+pub const MAX_STR_LEN: usize = 64; // projectId max input length (validated before hashing)
 pub const MAX_METHODOLOGY_LEN: usize = 64;
 pub const MAX_CID_LEN: usize = 100; // IPFS CID
 pub const MAX_EVIDENCE_CIDS: usize = 50; // number of evidence CIDs stored per batch
 pub const MAX_REASON_LEN: usize = 200; // retirement reason
 pub const MAX_REPORT_REF_LEN: usize = 128; // retirement report reference / CID
+
+/// Maximum seed length for PDA derivation (Solana limit)
+pub const MAX_PDA_SEED_LEN: usize = 32;

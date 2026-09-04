@@ -10,6 +10,7 @@ import { VerificationModule } from './verification/verification.module';
 import { CarbonCreditsModule } from './carbon-credits/carbon-credits.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
 import { RetirementModule } from './retirement/retirement.module';
+import { ExplorerModule } from './explorer/explorer.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { RetirementModule } from './retirement/retirement.module';
     CarbonCreditsModule,
     MarketplaceModule,
     RetirementModule,
+    ExplorerModule,
   ],
 })
 export class AppModule {}

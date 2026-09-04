@@ -3,6 +3,7 @@ import { AnchorProvider, Program } from "@coral-xyz/anchor";
 import { Keypair, PublicKey, SystemProgram, LAMPORTS_PER_SOL, Transaction } from "@solana/web3.js";
 import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddress, getAccount } from "@solana/spl-token";
 import * as fs from "fs";
+import { createHash } from "crypto";
 
 const idl = JSON.parse(fs.readFileSync("target/idl/carbon_credit_program.json", "utf8"));
 const pid = new PublicKey(idl.address);
@@ -58,16 +59,18 @@ const [oracleMintAuthority] = PublicKey.findProgramAddressSync([ORACLE_MINT_AUTH
 
   console.log("=== mintCredit (amount=1250) ===");
   const recipientAta = await getAssociatedTokenAddress(creditMintKp.publicKey, recipient.publicKey, false, TOKEN_2022_PROGRAM_ID);
+  const projectIdHash = createHash("sha256").update("P1").digest();
   try {
     const tx = await program.methods.mintCredit({
       projectId: "P1", vintage: 2026, methodology: "VM0036",
       evidenceCids: ["cid1"], reportCid: "rcid",
+      projectIdHash: Array.from(projectIdHash),
       reportStatus: { verified: {} }, verifiedTonnesScaled: new anchor.BN(1250),
     } as any).accounts({
       oracleConfig, oracleMintAuthority, creditMint: creditMintKp.publicKey,
       verifierOracleAuthority: verifierOracle.publicKey, recipient: recipient.publicKey,
       recipientTokenAccount: recipientAta,
-      creditBatch: PublicKey.findProgramAddressSync([PROGRAM_SEED, CREDIT_BATCH_SEED, creditMintKp.publicKey.toBuffer(), Buffer.from("P1"), new anchor.BN(2026).toArrayLike(Buffer, "le", 2)], pid)[0],
+      creditBatch: PublicKey.findProgramAddressSync([PROGRAM_SEED, CREDIT_BATCH_SEED, creditMintKp.publicKey.toBuffer(), projectIdHash, new anchor.BN(2026).toArrayLike(Buffer, "le", 2)], pid)[0],
       tokenProgram: TOKEN_2022_PROGRAM_ID, associatedTokenProgram: new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"), systemProgram: SystemProgram.programId, clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
     } as any).signers([verifierOracle]).rpc();
     console.log("mint tx:", tx);

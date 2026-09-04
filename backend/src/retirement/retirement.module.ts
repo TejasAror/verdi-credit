@@ -4,20 +4,13 @@ import { RetirementService } from './retirement.service';
 import { RetirementBlockchainService } from './retirement-blockchain.service';
 import { CertificateGeneratorService } from './certificate-generator.service';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { CarbonCreditsModule } from '../carbon-credits/carbon-credits.module'; // <-- ADD
 
-/**
- * RetirementModule (Stage 6).
- *
- * Wires the retirement controller/service plus the two seams it depends on:
- *  - RetirementBlockchainService — the Solana retirement (burn) seam, mock by
- *    default and real when RETIREMENT_ONCHAIN is configured.
- *  - CertificateGeneratorService — renders + pins the PDF Retirement
- *    Certificate to IPFS (PinataService is @Global, no import needed).
- *
- * PrismaModule is global; AuditLogModule is imported for immutable audit logs.
- */
 @Module({
-  imports: [AuditLogModule],
+  imports: [
+    AuditLogModule,
+    CarbonCreditsModule, // <-- ADD
+  ],
   controllers: [RetirementController],
   providers: [
     RetirementService,

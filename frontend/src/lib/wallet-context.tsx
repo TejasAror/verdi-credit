@@ -9,6 +9,7 @@
  *   - the connected public key (base58 address)
  *   - connecting / connected flags
  *   - signMessage() to authorize purchases (proves wallet control)
+ *   - linkWallet() to prove wallet ownership and link to VerdiCred account
  *
  * We deliberately keep this thin (rather than pulling the full
  * @solana/wallet-adapter-react ConnectionProvider tree). Settlement is now LIVE
@@ -42,13 +43,10 @@ interface WalletContextValue {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   signMessage: (message: string) => Promise<string>;
-  /**
-   * Sign (by the connected wallet) and submit a base64-encoded transaction
-   * returned by the backend (retirement burn / marketplace transfer), and
-   * return the resulting on-chain signature. Used by the client-signed
-   * settlement flow so credits are moved by the owner's wallet, not the server.
-   */
+  /** Sign and submit a base64 transaction from the backend. */
   submitTransaction: (base64: string) => Promise<string>;
+  /** Link the connected wallet to the authenticated VerdiCred user. */
+  linkWallet: (token: string) => Promise<void>;
   error: string | null;
 }
 
@@ -145,6 +143,45 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [adapter],
   );
 
+  const linkWallet = useCallback(
+    async (token: string) => {
+      if (!adapter.connected || !address) {
+        throw new Error('Wallet not connected.');
+      }
+      if (!adapter.signMessage) {
+        throw new Error('This wallet does not support message signing.');
+      }
+
+      // Generate the verification message
+      const message = `VerdiCred Wallet Link Verification\n\nWallet: ${address}\nTimestamp: ${Date.now()}\n\nSign this message to prove you control this wallet and link it to your VerdiCred account.`;
+
+      // Sign the message
+      const bytes = new TextEncoder().encode(message);
+      const sig = await adapter.signMessage(bytes);
+      const signature = btoa(String.fromCharCode(...sig));
+
+      // Send to backend
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/auth/link-wallet`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          walletAddress: address,
+          signature,
+          message,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ message: 'Link failed' }));
+        throw new Error(body.message ?? `Link failed with status ${res.status}`);
+      }
+    },
+    [adapter, address],
+  );
+
   const value: WalletContextValue = {
     address,
     connected: !!address,
@@ -154,6 +191,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     disconnect,
     signMessage,
     submitTransaction,
+    linkWallet,
     error,
   };
 

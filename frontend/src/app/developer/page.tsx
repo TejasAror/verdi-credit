@@ -2,14 +2,28 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { motion } from 'framer-motion';
 import { useAuth } from '@/lib/auth-context';
 import { apiFetch } from '@/lib/api';
 import { Project } from '@/lib/types';
 import CreateProjectForm from '@/components/CreateProjectForm';
 import ProjectsTable from '@/components/ProjectsTable';
+import { useToast } from '@/components/Toast';
+import {
+  AppShell,
+  PageHeader,
+  Notice,
+  MetricCard,
+  Rise,
+  riseItem,
+  staggerContainer,
+  EmptyState,
+} from '@/components/design-system';
+import { Leaf, FolderOpen, Coins, Activity, AlertTriangle } from 'lucide-react';
 
 export default function DeveloperDashboard() {
-  const { session, profile, token, signOut, loading } = useAuth();
+  const { session, profile, token, loading } = useAuth();
+  const { error: toastError } = useToast();
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
@@ -17,28 +31,25 @@ export default function DeveloperDashboard() {
   const loadProjects = useCallback(async () => {
     setProjectsLoading(true);
     try {
-      const data = await apiFetch<Project[]>('/projects', {
-        token: token ?? undefined,
-      });
+      const data = await apiFetch<Project[]>('/projects', { token: token ?? undefined });
       setProjects(data);
     } catch (err: any) {
       setNotice(err?.message ?? 'Failed to load projects.');
+      toastError('Could not load projects', err?.message);
     } finally {
       setProjectsLoading(false);
     }
-  }, [token]);
+  }, [token, toastError]);
 
   useEffect(() => {
-    if (session && token) {
-      loadProjects();
-    }
+    if (session && token) loadProjects();
   }, [session, token, loadProjects]);
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-6xl px-6 py-16 text-slate-500">
-        Loading…
-      </main>
+      <AppShell>
+        <div className="glass animate-pulse rounded-3xl p-10 text-content-faint">Loading…</div>
+      </AppShell>
     );
   }
 
@@ -58,70 +69,64 @@ export default function DeveloperDashboard() {
 
   if (profile && profile.role !== 'DEVELOPER' && profile.role !== 'ADMIN') {
     return (
-      <main className="mx-auto max-w-2xl px-6 py-20">
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
-          <h1 className="text-lg font-semibold text-amber-900">
-            Developer access required
-          </h1>
-          <p className="mt-2 text-sm text-amber-800">
-            Your account role is <strong>{profile.role}</strong>. Only
-            DEVELOPER (or ADMIN) accounts can register projects. Ask an admin to
-            promote your account, or contact support.
-          </p>
-        </div>
-      </main>
+      <AppShell max="3xl">
+        <Notice tone="warning">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-semibold text-content">Developer access required</p>
+              <p className="mt-1 text-content-muted">
+                Your account role is <strong>{profile.role}</strong>. Only DEVELOPER (or ADMIN)
+                accounts can register projects. Ask an admin to promote your account, or contact
+                support.
+              </p>
+            </div>
+          </div>
+        </Notice>
+      </AppShell>
     );
   }
 
-  return (
-    <main className="mx-auto max-w-6xl px-6 py-10">
-      <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
-            V
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-900">
-              Developer Dashboard
-            </h1>
-            <p className="text-sm text-slate-500">
-              Register and manage your carbon projects.
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3 text-sm">
-          <span className="text-slate-500">{profile?.email}</span>
-          <Link
-            href="/carbon-credits"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-100"
-          >
-            Carbon Credits
-          </Link>
-          <button
-            onClick={signOut}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-100"
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
+  const verified = projects.filter((p) => p.status === 'VERIFIED').length;
+  const pending = projects.filter((p) => p.status === 'PENDING_VERIFICATION').length;
 
-      {notice && (
-        <p className="mb-4 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">
-          {notice}
-        </p>
-      )}
+  return (
+    <AppShell max="6xl">
+      <PageHeader
+        badge="Stage 1 · Project Registration"
+        title="Developer Dashboard"
+        subtitle="Register and manage your carbon projects."
+        icon={<FolderOpen className="h-6 w-6" />}
+      />
+
+      {notice && <div className="mb-5"><Notice tone="error">{notice}</Notice></div>}
+
+      <motion.div
+        variants={staggerContainer}
+        initial="initial"
+        animate="animate"
+        className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3"
+      >
+        <motion.div variants={riseItem}>
+          <MetricCard label="Projects" value={projects.length} icon={<FolderOpen className="h-5 w-5" />} tone="violet" />
+        </motion.div>
+        <motion.div variants={riseItem}>
+          <MetricCard label="Verified" value={verified} icon={<Leaf className="h-5 w-5" />} tone="emerald" />
+        </motion.div>
+        <motion.div variants={riseItem}>
+          <MetricCard label="Pending" value={pending} icon={<Activity className="h-5 w-5" />} tone="amber" />
+        </motion.div>
+      </motion.div>
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
         <CreateProjectForm onCreated={loadProjects} />
-
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold text-slate-900">
-            Registered Projects
-          </h2>
+          <Rise>
+            <h2 className="text-lg font-semibold text-content">Registered Projects</h2>
+          </Rise>
           <ProjectsTable projects={projects} loading={projectsLoading} />
         </section>
       </div>
-    </main>
+    </AppShell>
   );
 }

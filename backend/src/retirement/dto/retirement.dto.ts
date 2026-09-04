@@ -13,6 +13,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
+/** A Solana transaction signature: 64 bytes base58-encoded (87-88 chars). */
+const BASE58_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{87,88}$/;
+
 /** Canonical retirement reason categories offered by the UI. */
 export const RETIREMENT_REASON_CATEGORIES = [
   'NET_ZERO',
@@ -87,7 +90,7 @@ export class RetireCreditsDto {
       'An already-submitted on-chain burn signature (client-signed flow). When present, the backend records it as the settlement proof and performs no further chain write. Mutually exclusive with `ownerSecret`.',
   })
   @IsOptional()
-  @Matches(BASE58, { message: 'txSignature must be a valid base58 Solana signature' })
+  @Matches(BASE58_SIGNATURE, { message: 'txSignature must be a valid base58 Solana signature' })
   txSignature?: string;
 }
 

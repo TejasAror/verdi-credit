@@ -88,6 +88,15 @@ export class CarbonCreditsController {
     );
   }
 
+  @Get('config')
+  @ApiBearerAuth('supabase-jwt')
+  @ApiOperation({
+    summary: 'Resolve the configured on-chain deployment (program id + credit mint) for the audit UI',
+  })
+  config() {
+    return this.carbonCredits.getConfig();
+  }
+
   @Get(':mint/batches')
   @ApiBearerAuth('supabase-jwt')
   @ApiOperation({
@@ -106,5 +115,27 @@ export class CarbonCreditsController {
   @ApiParam({ name: 'mint', description: 'Credit mint address (base58)' })
   getRetirements(@Param('mint') mint: string) {
     return this.carbonCredits.getRetirements(mint);
+  }
+
+  @Get(':mint/project/:projectId/batches')
+  @ApiBearerAuth('supabase-jwt')
+  @ApiOperation({
+    summary: 'List the CreditBatch PDAs for a specific project on a mint (project-scoped audit)',
+  })
+  @ApiParam({ name: 'mint', description: 'Credit mint address (base58)' })
+  @ApiParam({ name: 'projectId', description: 'Project id (uuid)' })
+  getProjectBatches(@Param('mint') mint: string, @Param('projectId') projectId: string) {
+    return this.carbonCredits.getBatchesForProject(mint, projectId);
+  }
+
+  @Get(':mint/project/:projectId/retirements')
+  @ApiBearerAuth('supabase-jwt')
+  @ApiOperation({
+    summary: 'List the RetirementRecords for a specific project on a mint (project-scoped audit)',
+  })
+  @ApiParam({ name: 'mint', description: 'Credit mint address (base58)' })
+  @ApiParam({ name: 'projectId', description: 'Project id (uuid)' })
+  getProjectRetirements(@Param('mint') mint: string, @Param('projectId') projectId: string) {
+    return this.carbonCredits.getRetirementsForProject(mint, projectId);
   }
 }

@@ -1,4 +1,13 @@
 import { Injectable } from '@nestjs/common';
+import { createHash } from 'crypto';
+
+/**
+ * Hash a variable-length string to a fixed 32-byte Buffer using SHA-256.
+ * Matches the on-chain `hash_to_pda_seed` function.
+ */
+export function hashToPdaSeed(input: string): Buffer {
+  return createHash('sha256').update(input).digest();
+}
 
 /**
  * Adapter that maps a Stage 3 `VerificationReport` onto the exact set of
@@ -33,6 +42,7 @@ export interface VerificationReportSummary {
 /** The arguments required by the on-chain `mintCredit` instruction. */
 export interface MintCreditArgs {
   projectId: string;
+  projectIdHash: Buffer; // SHA-256 hash of projectId, 32 bytes for PDA seed
   vintage: number;
   methodology: string;
   evidenceCids: string[];
@@ -80,6 +90,7 @@ export class Stage3ToOnchainAdapter {
 
     return {
       projectId: project_id,
+      projectIdHash: hashToPdaSeed(project_id),
       vintage: vintageYear,
       methodology,
       evidenceCids: evidence_cids,

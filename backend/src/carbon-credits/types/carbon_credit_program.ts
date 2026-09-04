@@ -410,7 +410,7 @@ export type CarbonCreditProgram = {
               },
               {
                 "kind": "arg",
-                "path": "params.project_id"
+                "path": "params.project_id_hash"
               },
               {
                 "kind": "arg",
@@ -989,6 +989,18 @@ export type CarbonCreditProgram = {
             "type": "string"
           },
           {
+            "name": "projectIdHash",
+            "docs": [
+              "SHA-256 hash of project_id, truncated to 32 bytes for PDA seed compatibility."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
             "name": "vintage",
             "type": "u16"
           },
@@ -1183,6 +1195,18 @@ export type CarbonCreditProgram = {
           {
             "name": "projectId",
             "type": "string"
+          },
+          {
+            "name": "projectIdHash",
+            "docs": [
+              "SHA-256 hash of projectId, 32 bytes for PDA seed compatibility."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
           },
           {
             "name": "vintage",
