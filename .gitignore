@@ -12,3 +12,8 @@ RL/
 coverage/
 stage4-carbon-credits/target/
 stage4-carbon-credits/RL/
+
+# Solana wallet/keypair files
+**/*keypair.json
+**/*-keypair.json
+*.pem
