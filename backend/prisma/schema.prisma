@@ -134,11 +134,7 @@ model Holding {
   @@index([tokenMint])
 }
 
-/// An immutable record of a credit retirement (burn / lock). Once written the
-/// retired credits can never re-enter circulation. `certificateCid` stores only
-/// the IPFS CID of the generated PDF Retirement Certificate (the PDF itself
-/// lives off-chain on IPFS). `status` transitions PENDING -> CONFIRMED ->
-/// CERTIFIED and is never reset.
+
 model Retirement {
   id                   String           @id @default(uuid())
   retirementId         String           @unique
@@ -175,13 +171,7 @@ model Retirement {
   @@index([createdAt])
 }
 
-/// A marketplace settlement (custody) keypair provisioned for a seller wallet
-/// under Design A (server-side settlement). The backend generated the keypair,
-/// encrypted the secret at rest (AES-256-GCM, master key from env) and only ever
-/// exposes the public side. The seller confirms the key with a wallet signature
-/// and deposits the listed credits into the key's Token-2022 ATA; purchases then
-/// settle server-side with `transferCredit` signed by this keypair — the buyer's
-/// wallet is never asked to sign a seller transfer.
+
 model SellerMarketplaceKey {
   id              String          @id @default(uuid())
   sellerUserId    String
@@ -235,11 +225,7 @@ model Listing {
   @@index([createdAt])
 }
 
-/// A decoded on-chain event emitted by the VerdiCred Anchor program. Every
-/// event (mint / transfer / retire / authority change) is written exactly once
-/// and keyed by its transaction signature + event index so the indexer is
-/// idempotent and can be safely re-run after downtime. `eventType` mirrors the
-/// program's `#[event]` names; `payload` keeps the full decoded struct.
+
 model IndexedEvent {
   id         String   @id @default(uuid())
   /// One of: CREDIT_MINTED | CREDIT_TRANSFERRED | CREDIT_RETIRED | ORACLE_AUTHORITY_CHANGED
