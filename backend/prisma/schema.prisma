@@ -109,11 +109,6 @@ model VerificationReport {
   @@index([createdAt])
 }
 
-/// A credit holding represents credits a VerdiCred user owns at a given
-/// token mint. `availableBalance` is the canonical off-chain ownership /
-/// balance record. Retiring credits decrements `availableBalance`; the
-/// amount removed can never be transferred or listed again because the
-/// underlying on-chain tokens are burned and a Retirement row is written.
 model Holding {
   id               String       @id @default(uuid())
   ownerId          String
